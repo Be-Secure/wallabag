@@ -12,7 +12,6 @@ use Scheb\TwoFactorBundle\Model\BackupCodeInterface;
 use Scheb\TwoFactorBundle\Model\Email\TwoFactorInterface as EmailTwoFactorInterface;
 use Scheb\TwoFactorBundle\Model\Google\TwoFactorInterface as GoogleTwoFactorInterface;
 use Symfony\Bridge\Doctrine\Validator\Constraints\UniqueEntity;
-use Symfony\Component\Security\Core\User\UserInterface;
 use Wallabag\ApiBundle\Entity\Client;
 use Wallabag\CoreBundle\Entity\Config;
 use Wallabag\CoreBundle\Entity\Entry;
@@ -129,7 +128,9 @@ class User extends BaseUser implements EmailTwoFactorInterface, GoogleTwoFactorI
     private $googleAuthenticatorSecret;
 
     /**
-     * @ORM\Column(type="json_array", nullable=true)
+     * @var array
+     *
+     * @ORM\Column(type="json", nullable=true)
      */
     private $backupCodes;
 
@@ -203,11 +204,6 @@ class User extends BaseUser implements EmailTwoFactorInterface, GoogleTwoFactorI
     public function getEntries()
     {
         return $this->entries;
-    }
-
-    public function isEqualTo(UserInterface $user)
-    {
-        return $this->username === $user->getUsername();
     }
 
     /**

@@ -14,7 +14,7 @@ use Wallabag\CoreBundle\Entity\Entry;
 
 class PocketImport extends AbstractImport
 {
-    const NB_ELEMENTS = 5000;
+    public const NB_ELEMENTS = 5000;
     /**
      * @var HttpMethodsClient
      */
@@ -179,7 +179,7 @@ class PocketImport extends AbstractImport
         $url = isset($importedEntry['resolved_url']) && '' !== $importedEntry['resolved_url'] ? $importedEntry['resolved_url'] : $importedEntry['given_url'];
 
         $existingEntry = $this->em
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->getRepository(Entry::class)
             ->findByUrlAndUserId($url, $this->user->getId());
 
         if (false !== $existingEntry) {

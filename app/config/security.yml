@@ -9,7 +9,7 @@ security:
     providers:
         administrators:
             entity:
-                class: WallabagUserBundle:User
+                class: 'Wallabag\UserBundle\Entity\User'
                 property: username
         fos_userbundle:
             id: fos_user.user_provider.username_email
@@ -34,12 +34,10 @@ security:
             provider: fos_userbundle
 
         login_firewall:
-            logout_on_user_change: true
             pattern: ^/login$
             anonymous:  ~
 
         secured_area:
-            logout_on_user_change: true
             pattern: ^/
             form_login:
                 provider: fos_userbundle

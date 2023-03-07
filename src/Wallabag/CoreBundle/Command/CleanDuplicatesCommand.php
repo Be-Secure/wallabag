@@ -2,21 +2,34 @@
 
 namespace Wallabag\CoreBundle\Command;
 
+use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\NoResultException;
-use Symfony\Bundle\FrameworkBundle\Command\ContainerAwareCommand;
+use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Wallabag\CoreBundle\Entity\Entry;
+use Wallabag\CoreBundle\Repository\EntryRepository;
 use Wallabag\UserBundle\Entity\User;
+use Wallabag\UserBundle\Repository\UserRepository;
 
-class CleanDuplicatesCommand extends ContainerAwareCommand
+class CleanDuplicatesCommand extends Command
 {
-    /** @var SymfonyStyle */
-    protected $io;
+    protected SymfonyStyle $io;
+    protected int $duplicates = 0;
+    private EntityManagerInterface $entityManager;
+    private EntryRepository $entryRepository;
+    private UserRepository $userRepository;
 
-    protected $duplicates = 0;
+    public function __construct(EntityManagerInterface $entityManager, EntryRepository $entryRepository, UserRepository $userRepository)
+    {
+        $this->entityManager = $entityManager;
+        $this->entryRepository = $entryRepository;
+        $this->userRepository = $userRepository;
+
+        parent::__construct();
+    }
 
     protected function configure()
     {
@@ -49,7 +62,7 @@ class CleanDuplicatesCommand extends ContainerAwareCommand
 
             $this->io->success('Finished cleaning.');
         } else {
-            $users = $this->getContainer()->get('wallabag_user.user_repository')->findAll();
+            $users = $this->userRepository->findAll();
 
             $this->io->text(sprintf('Cleaning through <info>%d</info> user accounts', \count($users)));
 
@@ -65,10 +78,7 @@ class CleanDuplicatesCommand extends ContainerAwareCommand
 
     private function cleanDuplicates(User $user)
     {
-        $em = $this->getContainer()->get('doctrine.orm.entity_manager');
-        $repo = $this->getContainer()->get('wallabag_core.entry_repository');
-
-        $entries = $repo->findAllEntriesIdAndUrlByUserId($user->getId());
+        $entries = $this->entryRepository->findAllEntriesIdAndUrlByUserId($user->getId());
 
         $duplicatesCount = 0;
         $urls = [];
@@ -79,8 +89,8 @@ class CleanDuplicatesCommand extends ContainerAwareCommand
             if (\in_array($url, $urls, true)) {
                 ++$duplicatesCount;
 
-                $em->remove($repo->find($entry['id']));
-                $em->flush(); // Flushing at the end of the loop would require the instance not being online
+                $this->entityManager->remove($this->entryRepository->find($entry['id']));
+                $this->entityManager->flush(); // Flushing at the end of the loop would require the instance not being online
             } else {
                 $urls[] = $entry['url'];
             }
@@ -105,10 +115,10 @@ class CleanDuplicatesCommand extends ContainerAwareCommand
      *
      * @param string $username
      *
-     * @return \Wallabag\UserBundle\Entity\User
+     * @return User
      */
     private function getUser($username)
     {
-        return $this->getContainer()->get('wallabag_user.user_repository')->findOneByUserName($username);
+        return $this->userRepository->findOneByUserName($username);
     }
 }

@@ -2,36 +2,54 @@
 
 namespace Wallabag\UserBundle\Controller;
 
+use Doctrine\ORM\EntityManagerInterface;
 use FOS\UserBundle\Event\UserEvent;
 use FOS\UserBundle\FOSUserEvents;
+use FOS\UserBundle\Model\UserManagerInterface;
 use Pagerfanta\Doctrine\ORM\QueryAdapter as DoctrineORMAdapter;
 use Pagerfanta\Exception\OutOfRangeCurrentPageException;
 use Pagerfanta\Pagerfanta;
-use Symfony\Bundle\FrameworkBundle\Controller\Controller;
+use Scheb\TwoFactorBundle\Security\TwoFactor\Provider\Google\GoogleAuthenticatorInterface;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Symfony\Component\Form\Form;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Contracts\Translation\TranslatorInterface;
 use Wallabag\UserBundle\Entity\User;
+use Wallabag\UserBundle\Form\NewUserType;
 use Wallabag\UserBundle\Form\SearchUserType;
+use Wallabag\UserBundle\Form\UserType;
+use Wallabag\UserBundle\Repository\UserRepository;
 
 /**
  * User controller.
  */
-class ManageController extends Controller
+class ManageController extends AbstractController
 {
+    private EntityManagerInterface $entityManager;
+    private TranslatorInterface $translator;
+
+    public function __construct(EntityManagerInterface $entityManager, TranslatorInterface $translator)
+    {
+        $this->entityManager = $entityManager;
+        $this->translator = $translator;
+    }
+
     /**
      * Creates a new User entity.
      *
      * @Route("/new", name="user_new", methods={"GET", "POST"})
      */
-    public function newAction(Request $request)
+    public function newAction(Request $request, UserManagerInterface $userManager, EventDispatcherInterface $eventDispatcher)
     {
-        $userManager = $this->container->get('fos_user.user_manager');
-
         $user = $userManager->createUser();
+        \assert($user instanceof User);
         // enable created user by default
         $user->setEnabled(true);
 
-        $form = $this->createForm('Wallabag\UserBundle\Form\NewUserType', $user);
+        $form = $this->createForm(NewUserType::class, $user);
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
@@ -39,17 +57,17 @@ class ManageController extends Controller
 
             // dispatch a created event so the associated config will be created
             $event = new UserEvent($user, $request);
-            $this->get('event_dispatcher')->dispatch(FOSUserEvents::USER_CREATED, $event);
+            $eventDispatcher->dispatch($event, FOSUserEvents::USER_CREATED);
 
-            $this->get('session')->getFlashBag()->add(
+            $this->addFlash(
                 'notice',
-                $this->get('translator')->trans('flashes.user.notice.added', ['%username%' => $user->getUsername()])
+                $this->translator->trans('flashes.user.notice.added', ['%username%' => $user->getUsername()])
             );
 
             return $this->redirectToRoute('user_edit', ['id' => $user->getId()]);
         }
 
-        return $this->render('WallabagUserBundle:Manage:new.html.twig', [
+        return $this->render('@WallabagUser/Manage/new.html.twig', [
             'user' => $user,
             'form' => $form->createView(),
         ]);
@@ -60,12 +78,10 @@ class ManageController extends Controller
      *
      * @Route("/{id}/edit", name="user_edit", methods={"GET", "POST"})
      */
-    public function editAction(Request $request, User $user)
+    public function editAction(Request $request, User $user, UserManagerInterface $userManager, GoogleAuthenticatorInterface $googleAuthenticator)
     {
-        $userManager = $this->container->get('fos_user.user_manager');
-
         $deleteForm = $this->createDeleteForm($user);
-        $form = $this->createForm('Wallabag\UserBundle\Form\UserType', $user);
+        $form = $this->createForm(UserType::class, $user);
         $form->handleRequest($request);
 
         // `googleTwoFactor` isn't a field within the User entity, we need to define it's value in a different way
@@ -77,7 +93,7 @@ class ManageController extends Controller
             // handle creation / reset of the OTP secret if checkbox changed from the previous state
             if ($this->getParameter('twofactor_auth')) {
                 if (true === $form->get('googleTwoFactor')->getData() && false === $user->isGoogleAuthenticatorEnabled()) {
-                    $user->setGoogleAuthenticatorSecret($this->get('scheb_two_factor.security.google_authenticator')->generateSecret());
+                    $user->setGoogleAuthenticatorSecret($googleAuthenticator->generateSecret());
                     $user->setEmailTwoFactor(false);
                 } elseif (false === $form->get('googleTwoFactor')->getData() && true === $user->isGoogleAuthenticatorEnabled()) {
                     $user->setGoogleAuthenticatorSecret(null);
@@ -86,15 +102,15 @@ class ManageController extends Controller
 
             $userManager->updateUser($user);
 
-            $this->get('session')->getFlashBag()->add(
+            $this->addFlash(
                 'notice',
-                $this->get('translator')->trans('flashes.user.notice.updated', ['%username%' => $user->getUsername()])
+                $this->translator->trans('flashes.user.notice.updated', ['%username%' => $user->getUsername()])
             );
 
             return $this->redirectToRoute('user_edit', ['id' => $user->getId()]);
         }
 
-        return $this->render('WallabagUserBundle:Manage:edit.html.twig', [
+        return $this->render('@WallabagUser/Manage/edit.html.twig', [
             'user' => $user,
             'edit_form' => $form->createView(),
             'delete_form' => $deleteForm->createView(),
@@ -113,14 +129,13 @@ class ManageController extends Controller
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            $this->get('session')->getFlashBag()->add(
+            $this->addFlash(
                 'notice',
-                $this->get('translator')->trans('flashes.user.notice.deleted', ['%username%' => $user->getUsername()])
+                $this->translator->trans('flashes.user.notice.deleted', ['%username%' => $user->getUsername()])
             );
 
-            $em = $this->getDoctrine()->getManager();
-            $em->remove($user);
-            $em->flush();
+            $this->entityManager->remove($user);
+            $this->entityManager->flush();
         }
 
         return $this->redirectToRoute('user_index');
@@ -134,12 +149,11 @@ class ManageController extends Controller
      * Default parameter for page is hardcoded (in duplication of the defaults from the Route)
      * because this controller is also called inside the layout template without any page as argument
      *
-     * @return \Symfony\Component\HttpFoundation\Response
+     * @return Response
      */
-    public function searchFormAction(Request $request, $page = 1)
+    public function searchFormAction(Request $request, UserRepository $userRepository, $page = 1)
     {
-        $em = $this->getDoctrine()->getManager();
-        $qb = $em->getRepository('WallabagUserBundle:User')->createQueryBuilder('u');
+        $qb = $userRepository->createQueryBuilder('u');
 
         $form = $this->createForm(SearchUserType::class);
         $form->handleRequest($request);
@@ -147,7 +161,7 @@ class ManageController extends Controller
         if ($form->isSubmitted() && $form->isValid()) {
             $searchTerm = (isset($request->get('search_user')['term']) ? $request->get('search_user')['term'] : '');
 
-            $qb = $em->getRepository('WallabagUserBundle:User')->getQueryBuilderForSearch($searchTerm);
+            $qb = $userRepository->getQueryBuilderForSearch($searchTerm);
         }
 
         $pagerAdapter = new DoctrineORMAdapter($qb->getQuery(), true, false);
@@ -162,7 +176,7 @@ class ManageController extends Controller
             }
         }
 
-        return $this->render('WallabagUserBundle:Manage:index.html.twig', [
+        return $this->render('@WallabagUser/Manage/index.html.twig', [
             'searchForm' => $form->createView(),
             'users' => $pagerFanta,
         ]);
@@ -173,7 +187,7 @@ class ManageController extends Controller
      *
      * @param User $user The User entity
      *
-     * @return \Symfony\Component\Form\Form The form
+     * @return Form The form
      */
     private function createDeleteForm(User $user)
     {

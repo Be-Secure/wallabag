@@ -21,8 +21,8 @@ use Wallabag\UserBundle\Entity\User;
  */
 class Config
 {
-    const REDIRECT_TO_HOMEPAGE = 0;
-    const REDIRECT_TO_CURRENT_PAGE = 1;
+    public const REDIRECT_TO_HOMEPAGE = 0;
+    public const REDIRECT_TO_CURRENT_PAGE = 1;
 
     /**
      * @var int
@@ -34,14 +34,6 @@ class Config
      * @Groups({"config_api"})
      */
     private $id;
-
-    /**
-     * @var string
-     *
-     * @Assert\NotBlank()
-     * @ORM\Column(name="theme", type="string", nullable=false)
-     */
-    private $theme;
 
     /**
      * @var int
@@ -160,30 +152,6 @@ class Config
     public function getId()
     {
         return $this->id;
-    }
-
-    /**
-     * Set theme.
-     *
-     * @param string $theme
-     *
-     * @return Config
-     */
-    public function setTheme($theme)
-    {
-        $this->theme = $theme;
-
-        return $this;
-    }
-
-    /**
-     * Get theme.
-     *
-     * @return string
-     */
-    public function getTheme()
-    {
-        return $this->theme;
     }
 
     /**

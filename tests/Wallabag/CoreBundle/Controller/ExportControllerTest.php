@@ -2,6 +2,7 @@
 
 namespace Tests\Wallabag\CoreBundle\Controller;
 
+use Doctrine\ORM\EntityManagerInterface;
 use Tests\Wallabag\CoreBundle\WallabagCoreTestCase;
 use Wallabag\CoreBundle\Entity\Entry;
 
@@ -12,7 +13,7 @@ class ExportControllerTest extends WallabagCoreTestCase
 
     public function testLogin()
     {
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $client->request('GET', '/export/unread.csv');
 
@@ -23,7 +24,7 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testUnknownCategoryExport()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $client->request('GET', '/export/awesomeness.epub');
 
@@ -33,7 +34,7 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testUnknownFormatExport()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $client->request('GET', '/export/unread.xslx');
 
@@ -43,14 +44,14 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testUnsupportedFormatExport()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $client->request('GET', '/export/unread.doc');
         $this->assertSame(404, $client->getResponse()->getStatusCode());
 
         $content = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneByUsernameAndNotArchived('admin');
 
         $client->request('GET', '/export/' . $content->getId() . '.doc');
@@ -60,7 +61,7 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testBadEntryId()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $client->request('GET', '/export/0.mobi');
 
@@ -70,7 +71,7 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testEpubExport()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         ob_start();
         $crawler = $client->request('GET', '/export/archive.epub');
@@ -87,11 +88,11 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testMobiExport()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $content = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneByUsernameAndNotArchived('admin');
 
         ob_start();
@@ -109,7 +110,7 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testPdfExport()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         ob_start();
         $crawler = $client->request('GET', '/export/all.pdf');
@@ -123,7 +124,7 @@ class ExportControllerTest extends WallabagCoreTestCase
         $this->assertSame('binary', $headers->get('content-transfer-encoding'));
 
         ob_start();
-        $crawler = $client->request('GET', '/export/tag_entries.pdf?tag=foo-bar');
+        $crawler = $client->request('GET', '/export/tag_entries.pdf?tag=t:foo-bar');
         ob_end_clean();
 
         $this->assertSame(200, $client->getResponse()->getStatusCode());
@@ -137,7 +138,7 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testTxtExport()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         ob_start();
         $crawler = $client->request('GET', '/export/all.txt');
@@ -154,12 +155,12 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testCsvExport()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         // to be sure results are the same
         $contentInDB = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->createQueryBuilder('e')
             ->select('e, t')
             ->leftJoin('e.user', 'u')
@@ -201,11 +202,11 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testJsonExport()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $contentInDB = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findByUrlAndUserId('http://0.0.0.0/entry1', $this->getLoggedInUserId());
 
         ob_start();
@@ -252,7 +253,7 @@ class ExportControllerTest extends WallabagCoreTestCase
         $this->setUpForJsonExportFromSearch();
 
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         ob_start();
         $crawler = $client->request('GET', '/export/search.json?search_entry[term]=entry+search&currentRoute=homepage');
@@ -274,12 +275,12 @@ class ExportControllerTest extends WallabagCoreTestCase
     public function testXmlExport()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         // to be sure results are the same
         $contentInDB = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->createQueryBuilder('e')
             ->leftJoin('e.user', 'u')
             ->where('u.username = :username')->setParameter('username', 'admin')
@@ -312,7 +313,7 @@ class ExportControllerTest extends WallabagCoreTestCase
 
     private function setUpForJsonExportFromSearch()
     {
-        $client = $this->getClient();
+        $client = $this->getTestClient();
         $em = $this->getEntityManager();
 
         $userRepository = $client->getContainer()

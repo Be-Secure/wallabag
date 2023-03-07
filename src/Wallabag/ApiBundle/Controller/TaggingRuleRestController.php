@@ -4,15 +4,26 @@ namespace Wallabag\ApiBundle\Controller;
 
 use JMS\Serializer\SerializationContext;
 use JMS\Serializer\SerializerBuilder;
-use Nelmio\ApiDocBundle\Annotation\ApiDoc;
+use Nelmio\ApiDocBundle\Annotation\Operation;
+use OpenApi\Annotations as OA;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Routing\Annotation\Route;
 
 class TaggingRuleRestController extends WallabagRestController
 {
     /**
      * Export all tagging rules as a json file.
      *
-     * @ApiDoc()
+     * @Operation(
+     *     tags={"TaggingRule"},
+     *     summary="Export all tagging rules as a json file.",
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
+     * )
+     *
+     * @Route("/api/taggingrule/export.{_format}", methods={"GET"}, name="api_get_taggingrule_export", defaults={"_format": "json"})
      *
      * @return Response
      */

@@ -2,21 +2,37 @@
 
 namespace Wallabag\ApiBundle\Controller;
 
+use Craue\ConfigBundle\Util\Config;
+use Doctrine\ORM\EntityManagerInterface;
 use FOS\UserBundle\Event\UserEvent;
 use FOS\UserBundle\FOSUserEvents;
+use FOS\UserBundle\Model\UserManagerInterface;
 use JMS\Serializer\SerializationContext;
-use Nelmio\ApiDocBundle\Annotation\ApiDoc;
+use Nelmio\ApiDocBundle\Annotation\Operation;
+use OpenApi\Annotations as OA;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\Routing\Annotation\Route;
 use Wallabag\ApiBundle\Entity\Client;
 use Wallabag\UserBundle\Entity\User;
+use Wallabag\UserBundle\Form\NewUserType;
 
 class UserRestController extends WallabagRestController
 {
     /**
      * Retrieve current logged in user informations.
      *
-     * @ApiDoc()
+     * @Operation(
+     *     tags={"User"},
+     *     summary="Retrieve current logged in user informations.",
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
+     * )
+     *
+     * @Route("/api/user.{_format}", methods={"GET"}, name="api_get_user", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
@@ -30,35 +46,63 @@ class UserRestController extends WallabagRestController
     /**
      * Register an user and create a client.
      *
-     * @ApiDoc(
-     *      requirements={
-     *          {"name"="username", "dataType"="string", "required"=true, "description"="The user's username"},
-     *          {"name"="password", "dataType"="string", "required"=true, "description"="The user's password"},
-     *          {"name"="email", "dataType"="string", "required"=true, "description"="The user's email"},
-     *          {"name"="client_name", "dataType"="string", "required"=true, "description"="The client name (to be used by your app)"}
-     *      }
+     * @Operation(
+     *     tags={"User"},
+     *     summary="Register an user and create a client.",
+     *     @OA\RequestBody(
+     *          @OA\JsonContent(
+     *              type="object",
+     *              required={"username", "password", "email", "client_name"},
+     *              @OA\Property(
+     *                  property="username",
+     *                  description="The user's username",
+     *                  @OA\Schema(type="string")
+     *              ),
+     *              @OA\Property(
+     *                  property="password",
+     *                  description="The user's password",
+     *                  @OA\Schema(type="string")
+     *              ),
+     *              @OA\Property(
+     *                  property="email",
+     *                  description="The user's email",
+     *                  @OA\Schema(type="string")
+     *              ),
+     *              @OA\Property(
+     *                  property="client_name",
+     *                  description="The client name (to be used by your app)",
+     *                  @OA\Schema(type="string")
+     *              ),
+     *          )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
      *
      * @todo Make this method (or the whole API) accessible only through https
      *
+     * @Route("/api/user.{_format}", methods={"PUT"}, name="api_put_user", defaults={"_format": "json"})
+     *
      * @return JsonResponse
      */
-    public function putUserAction(Request $request)
+    public function putUserAction(Request $request, Config $craueConfig, UserManagerInterface $userManager, EntityManagerInterface $entityManager, EventDispatcherInterface $eventDispatcher)
     {
-        if (!$this->container->getParameter('fosuser_registration') || !$this->get('craue_config')->get('api_user_registration')) {
-            $json = $this->get('jms_serializer')->serialize(['error' => "Server doesn't allow registrations"], 'json');
+        if (!$this->getParameter('fosuser_registration') || !$craueConfig->get('api_user_registration')) {
+            $json = $this->serializer->serialize(['error' => "Server doesn't allow registrations"], 'json');
 
             return (new JsonResponse())
                 ->setJson($json)
                 ->setStatusCode(JsonResponse::HTTP_FORBIDDEN);
         }
 
-        $userManager = $this->get('fos_user.user_manager');
         $user = $userManager->createUser();
+        \assert($user instanceof User);
         // user will be disabled BY DEFAULT to avoid spamming account to be enabled
         $user->setEnabled(false);
 
-        $form = $this->createForm('Wallabag\UserBundle\Form\NewUserType', $user, [
+        $form = $this->createForm(NewUserType::class, $user, [
             'csrf_protection' => false,
         ]);
 
@@ -92,7 +136,7 @@ class UserRestController extends WallabagRestController
                 $errors['password'] = $this->translateErrors($data['plainPassword']['children']['first']['errors']);
             }
 
-            $json = $this->get('jms_serializer')->serialize(['error' => $errors], 'json');
+            $json = $this->serializer->serialize(['error' => $errors], 'json');
 
             return (new JsonResponse())
                 ->setJson($json)
@@ -103,15 +147,14 @@ class UserRestController extends WallabagRestController
         $client = new Client($user);
         $client->setName($request->request->get('client_name', 'Default client'));
 
-        $this->getDoctrine()->getManager()->persist($client);
+        $entityManager->persist($client);
 
         $user->addClient($client);
 
         $userManager->updateUser($user);
 
         // dispatch a created event so the associated config will be created
-        $event = new UserEvent($user, $request);
-        $this->get('event_dispatcher')->dispatch(FOSUserEvents::USER_CREATED, $event);
+        $eventDispatcher->dispatch(new UserEvent($user, $request), FOSUserEvents::USER_CREATED);
 
         return $this->sendUser($user, 'user_api_with_client', JsonResponse::HTTP_CREATED);
     }
@@ -126,7 +169,7 @@ class UserRestController extends WallabagRestController
      */
     private function sendUser(User $user, $group = 'user_api', $status = JsonResponse::HTTP_OK)
     {
-        $json = $this->get('jms_serializer')->serialize(
+        $json = $this->serializer->serialize(
             $user,
             'json',
             SerializationContext::create()->setGroups([$group])
@@ -148,7 +191,7 @@ class UserRestController extends WallabagRestController
     {
         $translatedErrors = [];
         foreach ($errors as $error) {
-            $translatedErrors[] = $this->get('translator')->trans($error);
+            $translatedErrors[] = $this->translator->trans($error);
         }
 
         return $translatedErrors;

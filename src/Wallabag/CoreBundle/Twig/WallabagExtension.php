@@ -3,13 +3,14 @@
 namespace Wallabag\CoreBundle\Twig;
 
 use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
-use Symfony\Component\Translation\TranslatorInterface;
+use Symfony\Contracts\Translation\TranslatorInterface;
 use Twig\Extension\AbstractExtension;
 use Twig\Extension\GlobalsInterface;
 use Twig\TwigFilter;
 use Twig\TwigFunction;
 use Wallabag\CoreBundle\Repository\EntryRepository;
 use Wallabag\CoreBundle\Repository\TagRepository;
+use Wallabag\UserBundle\Entity\User;
 
 class WallabagExtension extends AbstractExtension implements GlobalsInterface
 {
@@ -30,7 +31,7 @@ class WallabagExtension extends AbstractExtension implements GlobalsInterface
         $this->rootDir = $rootDir;
     }
 
-    public function getGlobals()
+    public function getGlobals(): array
     {
         return [];
     }
@@ -81,7 +82,7 @@ class WallabagExtension extends AbstractExtension implements GlobalsInterface
     {
         $user = $this->tokenStorage->getToken() ? $this->tokenStorage->getToken()->getUser() : null;
 
-        if (null === $user || !\is_object($user)) {
+        if (!$user instanceof User) {
             return 0;
         }
 
@@ -127,7 +128,7 @@ class WallabagExtension extends AbstractExtension implements GlobalsInterface
     {
         $user = $this->tokenStorage->getToken() ? $this->tokenStorage->getToken()->getUser() : null;
 
-        if (null === $user || !\is_object($user)) {
+        if (!$user instanceof User) {
             return 0;
         }
 
@@ -143,7 +144,7 @@ class WallabagExtension extends AbstractExtension implements GlobalsInterface
     {
         $user = $this->tokenStorage->getToken() ? $this->tokenStorage->getToken()->getUser() : null;
 
-        if (null === $user || !\is_object($user)) {
+        if (!$user instanceof User) {
             return 0;
         }
 

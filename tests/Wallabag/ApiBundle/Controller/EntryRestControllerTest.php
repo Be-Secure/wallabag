@@ -2,6 +2,8 @@
 
 namespace Tests\Wallabag\ApiBundle\Controller;
 
+use Doctrine\ORM\EntityManagerInterface;
+use Symfony\Component\DependencyInjection\Container;
 use Tests\Wallabag\ApiBundle\WallabagApiTestCase;
 use Wallabag\CoreBundle\Entity\Entry;
 use Wallabag\CoreBundle\Entity\Tag;
@@ -13,8 +15,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testGetOneEntry()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneBy(['user' => $this->getUserId(), 'isArchived' => false]);
 
         if (!$entry) {
@@ -39,8 +41,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testGetOneEntryWithOriginUrl()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneBy(['user' => $this->getUserId(), 'url' => 'http://0.0.0.0/entry2']);
 
         if (!$entry) {
@@ -58,8 +60,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testExportEntry()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneBy(['user' => $this->getUserId(), 'isArchived' => false]);
 
         if (!$entry) {
@@ -106,8 +108,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testGetOneEntryWrongUser()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneBy(['user' => $this->getUserId('bob'), 'isArchived' => false]);
 
         if (!$entry) {
@@ -153,6 +155,25 @@ class EntryRestControllerTest extends WallabagApiTestCase
         $this->assertGreaterThanOrEqual(1, $content['pages']);
 
         $this->assertNull($content['_embedded']['items'][0]['content']);
+
+        $this->assertSame('application/json', $this->client->getResponse()->headers->get('Content-Type'));
+    }
+
+    public function testGetEntriesByDomainName()
+    {
+        $this->client->request('GET', '/api/entries?domain_name=domain.io');
+
+        $this->assertSame(200, $this->client->getResponse()->getStatusCode());
+
+        $content = json_decode($this->client->getResponse()->getContent(), true);
+
+        $this->assertGreaterThanOrEqual(1, \count($content));
+        $this->assertNotEmpty($content['_embedded']['items']);
+        $this->assertGreaterThanOrEqual(1, $content['total']);
+        $this->assertSame(1, $content['page']);
+        $this->assertGreaterThanOrEqual(1, $content['pages']);
+
+        $this->assertSame('test title entry6', $content['_embedded']['items'][0]['title']);
 
         $this->assertSame('application/json', $this->client->getResponse()->headers->get('Content-Type'));
     }
@@ -204,8 +225,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testGetEntriesPublicOnly()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneByUser($this->getUserId());
 
         if (!$entry) {
@@ -215,7 +236,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
         // generate at least one public entry
         $entry->generateUid();
 
-        $em = $this->client->getContainer()->get('doctrine.orm.entity_manager');
+        $em = $this->client->getContainer()->get(EntityManagerInterface::class);
         $em->persist($entry);
         $em->flush();
 
@@ -351,7 +372,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
 
         foreach (['self', 'first', 'last'] as $link) {
             $this->assertArrayHasKey('href', $content['_links'][$link]);
-            $this->assertStringContainsString('tags=' . urlencode('foo,bar'), $content['_links'][$link]['href']);
+            $this->assertStringContainsString('tags=foo,bar', $content['_links'][$link]['href']);
         }
 
         $this->assertSame('application/json', $this->client->getResponse()->headers->get('Content-Type'));
@@ -421,7 +442,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
 
     public function testDeleteEntry()
     {
-        $em = $this->client->getContainer()->get('doctrine.orm.entity_manager');
+        $em = $this->client->getContainer()->get(EntityManagerInterface::class);
         $entry = new Entry($em->getReference(User::class, 1));
         $entry->setUrl('http://0.0.0.0/test-delete-entry');
         $entry->setTitle('Test delete entry');
@@ -455,7 +476,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
 
     public function testDeleteEntryExpectId()
     {
-        $em = $this->client->getContainer()->get('doctrine.orm.entity_manager');
+        $em = $this->client->getContainer()->get(EntityManagerInterface::class);
         $entry = new Entry($em->getReference(User::class, 1));
         $entry->setUrl('http://0.0.0.0/test-delete-entry-id');
         $em->persist($entry);
@@ -526,7 +547,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
 
     public function testPostSameEntry()
     {
-        $em = $this->client->getContainer()->get('doctrine.orm.entity_manager');
+        $em = $this->client->getContainer()->get(EntityManagerInterface::class);
         $entry = new Entry($em->getReference(User::class, $this->getUserId()));
         $entry->setUrl('https://www.lemonde.fr/pixels/article/2015/03/28/plongee-dans-l-univers-d-ingress-le-jeu-de-google-aux-frontieres-du-reel_4601155_4408996.html');
         $entry->setArchived(true);
@@ -555,7 +576,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
 
     public function testPostEntryWhenFetchContentFails()
     {
-        /** @var \Symfony\Component\DependencyInjection\Container $container */
+        /** @var Container $container */
         $container = $this->client->getContainer();
         $contentProxy = $this->getMockBuilder(ContentProxy::class)
             ->disableOriginalConstructor()
@@ -564,7 +585,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
         $contentProxy->expects($this->any())
             ->method('updateEntry')
             ->willThrowException(new \Exception('Test Fetch content fails'));
-        $container->set('wallabag_core.content_proxy', $contentProxy);
+        $container->set(ContentProxy::class, $contentProxy);
 
         try {
             $this->client->request('POST', '/api/entries.json', [
@@ -580,8 +601,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
         } finally {
             // Remove the created entry to avoid side effects on other tests
             if (isset($content['id'])) {
-                $em = $this->client->getContainer()->get('doctrine.orm.entity_manager');
-                $entry = $em->getReference('WallabagCoreBundle:Entry', $content['id']);
+                $em = $this->client->getContainer()->get(EntityManagerInterface::class);
+                $entry = $em->getReference(Entry::class, $content['id']);
                 $em->remove($entry);
                 $em->flush();
             }
@@ -654,8 +675,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testPatchEntry()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneByUser($this->getUserId());
 
         if (!$entry) {
@@ -696,8 +717,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testPatchEntryWithoutQuotes()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneByUser($this->getUserId());
 
         if (!$entry) {
@@ -730,8 +751,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testPatchEntryWithOriginUrl()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneByUser($this->getUserId());
 
         if (!$entry) {
@@ -761,8 +782,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testPatchEntryRemoveOriginUrl()
     {
         $entry = $this->client->getContainer()
-        ->get('doctrine.orm.entity_manager')
-        ->getRepository('WallabagCoreBundle:Entry')
+        ->get(EntityManagerInterface::class)
+        ->getRepository(Entry::class)
         ->findOneByUser($this->getUserId());
 
         if (!$entry) {
@@ -793,8 +814,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testPatchEntryNullOriginUrl()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneByUser($this->getUserId());
 
         if (!$entry) {
@@ -815,8 +836,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testGetTagsEntry()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneWithTags($this->user->getId());
 
         $entry = $entry[0];
@@ -838,8 +859,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testPostTagsOnEntry()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneByUser($this->getUserId());
 
         if (!$entry) {
@@ -860,8 +881,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
         $this->assertCount($nbTags + 3, $content['tags']);
 
         $entryDB = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->find($entry->getId());
 
         $tagsInDB = [];
@@ -877,8 +898,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testDeleteOneTagEntry()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneWithTags($this->user->getId());
         $entry = $entry[0];
 
@@ -903,8 +924,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testSaveIsArchivedAfterPost()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneBy(['user' => $this->getUserId(), 'isArchived' => true]);
 
         if (!$entry) {
@@ -925,8 +946,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testSaveIsStarredAfterPost()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneBy(['user' => $this->getUserId(), 'isStarred' => true]);
 
         if (!$entry) {
@@ -947,8 +968,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     public function testSaveIsArchivedAfterPatch()
     {
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneBy(['user' => $this->getUserId(), 'isArchived' => true]);
 
         if (!$entry) {
@@ -973,8 +994,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
     {
         $now = new \DateTime();
         $entry = $this->client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findOneBy(['user' => $this->getUserId(), 'isStarred' => true]);
 
         if (!$entry) {
@@ -1134,8 +1155,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
 
     public function testReloadEntryErrorWhileFetching()
     {
-        $entry = $this->client->getContainer()->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+        $entry = $this->client->getContainer()->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findByUrlAndUserId('http://0.0.0.0/entry4', $this->getUserId());
 
         if (!$entry) {
@@ -1170,8 +1191,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
 
     public function testPostEntriesTagsListAction()
     {
-        $entry = $this->client->getContainer()->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+        $entry = $this->client->getContainer()->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findByUrlAndUserId('http://0.0.0.0/entry4', $this->getUserId());
 
         $tags = $entry->getTags();
@@ -1194,8 +1215,8 @@ class EntryRestControllerTest extends WallabagApiTestCase
         $this->assertIsInt($content[0]['entry']);
         $this->assertSame('http://0.0.0.0/entry4', $content[0]['url']);
 
-        $entry = $this->client->getContainer()->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+        $entry = $this->client->getContainer()->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findByUrlAndUserId('http://0.0.0.0/entry4', $this->getUserId());
 
         $tags = $entry->getTags();
@@ -1215,7 +1236,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
 
     public function testDeleteEntriesTagsListAction()
     {
-        $em = $this->client->getContainer()->get('doctrine.orm.entity_manager');
+        $em = $this->client->getContainer()->get(EntityManagerInterface::class);
         $entry = new Entry($em->getReference(User::class, $this->getUserId()));
         $entry->setUrl('http://0.0.0.0/test-entry');
         $entry->addTag((new Tag())->setLabel('foo-tag'));
@@ -1235,7 +1256,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
         $this->client->request('DELETE', '/api/entries/tags/list?list=' . json_encode($list));
         $this->assertSame(200, $this->client->getResponse()->getStatusCode());
 
-        $entry = $em->getRepository('WallabagCoreBundle:Entry')->find($entry->getId());
+        $entry = $em->getRepository(Entry::class)->find($entry->getId());
         $this->assertCount(0, $entry->getTags());
     }
 
@@ -1283,7 +1304,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
 
     public function testDeleteEntriesListAction()
     {
-        $em = $this->client->getContainer()->get('doctrine.orm.entity_manager');
+        $em = $this->client->getContainer()->get(EntityManagerInterface::class);
         $em->persist((new Entry($em->getReference(User::class, $this->getUserId())))->setUrl('http://0.0.0.0/test-entry1'));
 
         $em->flush();
@@ -1341,7 +1362,7 @@ class EntryRestControllerTest extends WallabagApiTestCase
 
     public function testRePostEntryAndReUsePublishedAt()
     {
-        $em = $this->client->getContainer()->get('doctrine.orm.entity_manager');
+        $em = $this->client->getContainer()->get(EntityManagerInterface::class);
         $entry = new Entry($em->getReference(User::class, $this->getUserId()));
         $entry->setTitle('Antoine de Caunes : « Je veux avoir le droit de tâtonner »');
         $entry->setContent('hihi');

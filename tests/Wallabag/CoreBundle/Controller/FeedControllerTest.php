@@ -2,7 +2,10 @@
 
 namespace Tests\Wallabag\CoreBundle\Controller;
 
+use Doctrine\ORM\EntityManagerInterface;
 use Tests\Wallabag\CoreBundle\WallabagCoreTestCase;
+use Wallabag\CoreBundle\Entity\Entry;
+use Wallabag\UserBundle\Entity\User;
 
 class FeedControllerTest extends WallabagCoreTestCase
 {
@@ -79,7 +82,7 @@ class FeedControllerTest extends WallabagCoreTestCase
      */
     public function testBadUrl($url)
     {
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $client->request('GET', $url);
 
@@ -88,10 +91,10 @@ class FeedControllerTest extends WallabagCoreTestCase
 
     public function testUnread()
     {
-        $client = $this->getClient();
-        $em = $client->getContainer()->get('doctrine.orm.entity_manager');
+        $client = $this->getTestClient();
+        $em = $client->getContainer()->get(EntityManagerInterface::class);
         $user = $em
-            ->getRepository('WallabagUserBundle:User')
+            ->getRepository(User::class)
             ->findOneByUsername('admin');
 
         $config = $user->getConfig();
@@ -109,10 +112,10 @@ class FeedControllerTest extends WallabagCoreTestCase
 
     public function testStarred()
     {
-        $client = $this->getClient();
-        $em = $client->getContainer()->get('doctrine.orm.entity_manager');
+        $client = $this->getTestClient();
+        $em = $client->getContainer()->get(EntityManagerInterface::class);
         $user = $em
-            ->getRepository('WallabagUserBundle:User')
+            ->getRepository(User::class)
             ->findOneByUsername('admin');
 
         $config = $user->getConfig();
@@ -121,7 +124,7 @@ class FeedControllerTest extends WallabagCoreTestCase
         $em->persist($config);
         $em->flush();
 
-        $client = $this->getClient();
+        $client = $this->getTestClient();
         $client->request('GET', '/feed/admin/SUPERTOKEN/starred');
 
         $this->assertSame(200, $client->getResponse()->getStatusCode(), 1);
@@ -131,10 +134,10 @@ class FeedControllerTest extends WallabagCoreTestCase
 
     public function testArchives()
     {
-        $client = $this->getClient();
-        $em = $client->getContainer()->get('doctrine.orm.entity_manager');
+        $client = $this->getTestClient();
+        $em = $client->getContainer()->get(EntityManagerInterface::class);
         $user = $em
-            ->getRepository('WallabagUserBundle:User')
+            ->getRepository(User::class)
             ->findOneByUsername('admin');
 
         $config = $user->getConfig();
@@ -143,7 +146,7 @@ class FeedControllerTest extends WallabagCoreTestCase
         $em->persist($config);
         $em->flush();
 
-        $client = $this->getClient();
+        $client = $this->getTestClient();
         $client->request('GET', '/feed/admin/SUPERTOKEN/archive');
 
         $this->assertSame(200, $client->getResponse()->getStatusCode());
@@ -153,10 +156,10 @@ class FeedControllerTest extends WallabagCoreTestCase
 
     public function testAll()
     {
-        $client = $this->getClient();
-        $em = $client->getContainer()->get('doctrine.orm.entity_manager');
+        $client = $this->getTestClient();
+        $em = $client->getContainer()->get(EntityManagerInterface::class);
         $user = $em
-            ->getRepository('WallabagUserBundle:User')
+            ->getRepository(User::class)
             ->findOneByUsername('admin');
 
         $config = $user->getConfig();
@@ -165,7 +168,7 @@ class FeedControllerTest extends WallabagCoreTestCase
         $em->persist($config);
         $em->flush();
 
-        $client = $this->getClient();
+        $client = $this->getTestClient();
         $client->request('GET', '/feed/admin/SUPERTOKEN/all');
 
         $this->assertSame(200, $client->getResponse()->getStatusCode());
@@ -175,10 +178,10 @@ class FeedControllerTest extends WallabagCoreTestCase
 
     public function testPagination()
     {
-        $client = $this->getClient();
-        $em = $client->getContainer()->get('doctrine.orm.entity_manager');
+        $client = $this->getTestClient();
+        $em = $client->getContainer()->get(EntityManagerInterface::class);
         $user = $em
-            ->getRepository('WallabagUserBundle:User')
+            ->getRepository(User::class)
             ->findOneByUsername('admin');
 
         $config = $user->getConfig();
@@ -187,7 +190,7 @@ class FeedControllerTest extends WallabagCoreTestCase
         $em->persist($config);
         $em->flush();
 
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $client->request('GET', '/feed/admin/SUPERTOKEN/unread');
         $this->assertSame(200, $client->getResponse()->getStatusCode());
@@ -203,10 +206,10 @@ class FeedControllerTest extends WallabagCoreTestCase
 
     public function testTags()
     {
-        $client = $this->getClient();
-        $em = $client->getContainer()->get('doctrine.orm.entity_manager');
+        $client = $this->getTestClient();
+        $em = $client->getContainer()->get(EntityManagerInterface::class);
         $user = $em
-            ->getRepository('WallabagUserBundle:User')
+            ->getRepository(User::class)
             ->findOneByUsername('admin');
 
         $config = $user->getConfig();
@@ -215,12 +218,12 @@ class FeedControllerTest extends WallabagCoreTestCase
         $em->persist($config);
 
         $entry1 = $em
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->getRepository(Entry::class)
             ->find(1)
         ;
 
         $entry4 = $em
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->getRepository(Entry::class)
             ->find(4)
         ;
 
@@ -244,32 +247,32 @@ class FeedControllerTest extends WallabagCoreTestCase
 
         $em->flush();
 
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         // tag foo - without sort
-        $crawler = $client->request('GET', '/feed/admin/SUPERTOKEN/tags/foo');
+        $crawler = $client->request('GET', '/feed/admin/SUPERTOKEN/tags/t:foo');
         $this->assertSame(200, $client->getResponse()->getStatusCode());
         $this->assertSame('test title entry4', $crawler->filterXPath('//feed/entry[1]/title')->text());
         $this->assertSame('test title entry1', $crawler->filterXPath('//feed/entry[2]/title')->text());
 
         // tag foo - with sort created
-        $crawler = $client->request('GET', '/feed/admin/SUPERTOKEN/tags/foo?sort=created');
+        $crawler = $client->request('GET', '/feed/admin/SUPERTOKEN/tags/t:foo?sort=created');
         $this->assertSame(200, $client->getResponse()->getStatusCode());
         $this->assertSame('test title entry4', $crawler->filterXPath('//feed/entry[1]/title')->text());
         $this->assertSame('test title entry1', $crawler->filterXPath('//feed/entry[2]/title')->text());
 
         // tag foo - with sort updated
-        $crawler = $client->request('GET', '/feed/admin/SUPERTOKEN/tags/foo?sort=updated');
+        $crawler = $client->request('GET', '/feed/admin/SUPERTOKEN/tags/t:foo?sort=updated');
         $this->assertSame(200, $client->getResponse()->getStatusCode());
         $this->assertSame('test title entry1', $crawler->filterXPath('//feed/entry[1]/title')->text());
         $this->assertSame('test title entry4', $crawler->filterXPath('//feed/entry[2]/title')->text());
 
         // tag foo - with invalid sort
-        $client->request('GET', '/feed/admin/SUPERTOKEN/tags/foo?sort=invalid');
+        $client->request('GET', '/feed/admin/SUPERTOKEN/tags/t:foo?sort=invalid');
         $this->assertSame(400, $client->getResponse()->getStatusCode());
 
         // tag foo/3000
-        $client->request('GET', '/feed/admin/SUPERTOKEN/tags/foo/3000');
+        $client->request('GET', '/feed/admin/SUPERTOKEN/tags/t:foo/3000');
         $this->assertSame(302, $client->getResponse()->getStatusCode());
     }
 
@@ -299,7 +302,7 @@ class FeedControllerTest extends WallabagCoreTestCase
      */
     public function testRedirectFromRssToAtom($url)
     {
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $client->request('GET', $url);
 

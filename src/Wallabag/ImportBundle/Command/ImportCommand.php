@@ -2,16 +2,57 @@
 
 namespace Wallabag\ImportBundle\Command;
 
-use Symfony\Bundle\FrameworkBundle\Command\ContainerAwareCommand;
+use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Config\Definition\Exception\Exception;
+use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
 use Symfony\Component\Security\Core\Authentication\Token\UsernamePasswordToken;
+use Wallabag\ImportBundle\Import\ChromeImport;
+use Wallabag\ImportBundle\Import\DeliciousImport;
+use Wallabag\ImportBundle\Import\FirefoxImport;
+use Wallabag\ImportBundle\Import\InstapaperImport;
+use Wallabag\ImportBundle\Import\PinboardImport;
+use Wallabag\ImportBundle\Import\ReadabilityImport;
+use Wallabag\ImportBundle\Import\WallabagV1Import;
+use Wallabag\ImportBundle\Import\WallabagV2Import;
+use Wallabag\UserBundle\Entity\User;
+use Wallabag\UserBundle\Repository\UserRepository;
 
-class ImportCommand extends ContainerAwareCommand
+class ImportCommand extends Command
 {
+    private EntityManagerInterface $entityManager;
+    private TokenStorageInterface $tokenStorage;
+    private UserRepository $userRepository;
+    private WallabagV2Import $wallabagV2Import;
+    private FirefoxImport $firefoxImport;
+    private ChromeImport $chromeImport;
+    private ReadabilityImport $readabilityImport;
+    private InstapaperImport $instapaperImport;
+    private PinboardImport $pinboardImport;
+    private DeliciousImport $deliciousImport;
+    private WallabagV1Import $wallabagV1Import;
+
+    public function __construct(EntityManagerInterface $entityManager, TokenStorageInterface $tokenStorage, UserRepository $userRepository, WallabagV2Import $wallabagV2Import, FirefoxImport $firefoxImport, ChromeImport $chromeImport, ReadabilityImport $readabilityImport, InstapaperImport $instapaperImport, PinboardImport $pinboardImport, DeliciousImport $deliciousImport, WallabagV1Import $wallabagV1Import)
+    {
+        $this->entityManager = $entityManager;
+        $this->tokenStorage = $tokenStorage;
+        $this->userRepository = $userRepository;
+        $this->wallabagV2Import = $wallabagV2Import;
+        $this->firefoxImport = $firefoxImport;
+        $this->chromeImport = $chromeImport;
+        $this->readabilityImport = $readabilityImport;
+        $this->instapaperImport = $instapaperImport;
+        $this->pinboardImport = $pinboardImport;
+        $this->deliciousImport = $deliciousImport;
+        $this->wallabagV1Import = $wallabagV1Import;
+
+        parent::__construct();
+    }
+
     protected function configure()
     {
         $this
@@ -34,14 +75,13 @@ class ImportCommand extends ContainerAwareCommand
             throw new Exception(sprintf('File "%s" not found', $input->getArgument('filepath')));
         }
 
-        $em = $this->getContainer()->get('doctrine')->getManager();
         // Turning off doctrine default logs queries for saving memory
-        $em->getConnection()->getConfiguration()->setSQLLogger(null);
+        $this->entityManager->getConnection()->getConfiguration()->setSQLLogger(null);
 
         if ($input->getOption('useUserId')) {
-            $entityUser = $em->getRepository('WallabagUserBundle:User')->findOneById($input->getArgument('username'));
+            $entityUser = $this->userRepository->findOneById($input->getArgument('username'));
         } else {
-            $entityUser = $em->getRepository('WallabagUserBundle:User')->findOneByUsername($input->getArgument('username'));
+            $entityUser = $this->userRepository->findOneByUsername($input->getArgument('username'));
         }
 
         if (!\is_object($entityUser)) {
@@ -55,33 +95,33 @@ class ImportCommand extends ContainerAwareCommand
             'main',
             $entityUser->getRoles());
 
-        $this->getContainer()->get('security.token_storage')->setToken($token);
-        $user = $this->getContainer()->get('security.token_storage')->getToken()->getUser();
+        $this->tokenStorage->setToken($token);
+        $user = $this->tokenStorage->getToken()->getUser();
 
         switch ($input->getOption('importer')) {
             case 'v2':
-                $import = $this->getContainer()->get('wallabag_import.wallabag_v2.import');
+                $import = $this->wallabagV2Import;
                 break;
             case 'firefox':
-                $import = $this->getContainer()->get('wallabag_import.firefox.import');
+                $import = $this->firefoxImport;
                 break;
             case 'chrome':
-                $import = $this->getContainer()->get('wallabag_import.chrome.import');
+                $import = $this->chromeImport;
                 break;
             case 'readability':
-                $import = $this->getContainer()->get('wallabag_import.readability.import');
+                $import = $this->readabilityImport;
                 break;
             case 'instapaper':
-                $import = $this->getContainer()->get('wallabag_import.instapaper.import');
+                $import = $this->instapaperImport;
                 break;
             case 'pinboard':
-                $import = $this->getContainer()->get('wallabag_import.pinboard.import');
+                $import = $this->pinboardImport;
                 break;
             case 'delicious':
-                $import = $this->getContainer()->get('wallabag_import.delicious.import');
+                $import = $this->deliciousImport;
                 break;
             default:
-                $import = $this->getContainer()->get('wallabag_import.wallabag_v1.import');
+                $import = $this->wallabagV1Import;
         }
 
         $import->setMarkAsRead($input->getOption('markAsRead'));
@@ -98,8 +138,10 @@ class ImportCommand extends ContainerAwareCommand
             $output->writeln('<comment>' . $summary['skipped'] . ' already saved</comment>');
         }
 
-        $em->clear();
+        $this->entityManager->clear();
 
         $output->writeln('End : ' . (new \DateTime())->format('d-m-Y G:i:s') . ' ---');
+
+        return 0;
     }
 }

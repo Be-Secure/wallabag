@@ -2,10 +2,19 @@
 
 namespace Wallabag\CoreBundle\Controller;
 
-use Symfony\Bundle\FrameworkBundle\Controller\Controller;
+use Craue\ConfigBundle\Util\Config;
+use Doctrine\ORM\EntityManagerInterface;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\Form\Form;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Contracts\Translation\TranslatorInterface;
 use Wallabag\CoreBundle\Entity\SiteCredential;
+use Wallabag\CoreBundle\Form\Type\SiteCredentialType;
+use Wallabag\CoreBundle\Helper\CryptoProxy;
+use Wallabag\CoreBundle\Repository\SiteCredentialRepository;
 use Wallabag\UserBundle\Entity\User;
 
 /**
@@ -13,20 +22,33 @@ use Wallabag\UserBundle\Entity\User;
  *
  * @Route("/site-credentials")
  */
-class SiteCredentialController extends Controller
+class SiteCredentialController extends AbstractController
 {
+    private EntityManagerInterface $entityManager;
+    private TranslatorInterface $translator;
+    private CryptoProxy $cryptoProxy;
+    private Config $craueConfig;
+
+    public function __construct(EntityManagerInterface $entityManager, TranslatorInterface $translator, CryptoProxy $cryptoProxy, Config $craueConfig)
+    {
+        $this->entityManager = $entityManager;
+        $this->translator = $translator;
+        $this->cryptoProxy = $cryptoProxy;
+        $this->craueConfig = $craueConfig;
+    }
+
     /**
      * Lists all User entities.
      *
      * @Route("/", name="site_credentials_index", methods={"GET"})
      */
-    public function indexAction()
+    public function indexAction(SiteCredentialRepository $repository)
     {
         $this->isSiteCredentialsEnabled();
 
-        $credentials = $this->get('wallabag_core.site_credential_repository')->findByUser($this->getUser());
+        $credentials = $repository->findByUser($this->getUser());
 
-        return $this->render('WallabagCoreBundle:SiteCredential:index.html.twig', [
+        return $this->render('@WallabagCore/SiteCredential/index.html.twig', [
             'credentials' => $credentials,
         ]);
     }
@@ -36,7 +58,7 @@ class SiteCredentialController extends Controller
      *
      * @Route("/new", name="site_credentials_new", methods={"GET", "POST"})
      *
-     * @return \Symfony\Component\HttpFoundation\Response
+     * @return Response
      */
     public function newAction(Request $request)
     {
@@ -44,26 +66,25 @@ class SiteCredentialController extends Controller
 
         $credential = new SiteCredential($this->getUser());
 
-        $form = $this->createForm('Wallabag\CoreBundle\Form\Type\SiteCredentialType', $credential);
+        $form = $this->createForm(SiteCredentialType::class, $credential);
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            $credential->setUsername($this->get('wallabag_core.helper.crypto_proxy')->crypt($credential->getUsername()));
-            $credential->setPassword($this->get('wallabag_core.helper.crypto_proxy')->crypt($credential->getPassword()));
+            $credential->setUsername($this->cryptoProxy->crypt($credential->getUsername()));
+            $credential->setPassword($this->cryptoProxy->crypt($credential->getPassword()));
 
-            $em = $this->getDoctrine()->getManager();
-            $em->persist($credential);
-            $em->flush();
+            $this->entityManager->persist($credential);
+            $this->entityManager->flush();
 
-            $this->get('session')->getFlashBag()->add(
+            $this->addFlash(
                 'notice',
-                $this->get('translator')->trans('flashes.site_credential.notice.added', ['%host%' => $credential->getHost()])
+                $this->translator->trans('flashes.site_credential.notice.added', ['%host%' => $credential->getHost()])
             );
 
             return $this->redirectToRoute('site_credentials_index');
         }
 
-        return $this->render('WallabagCoreBundle:SiteCredential:new.html.twig', [
+        return $this->render('@WallabagCore/SiteCredential/new.html.twig', [
             'credential' => $credential,
             'form' => $form->createView(),
         ]);
@@ -74,7 +95,7 @@ class SiteCredentialController extends Controller
      *
      * @Route("/{id}/edit", name="site_credentials_edit", methods={"GET", "POST"})
      *
-     * @return \Symfony\Component\HttpFoundation\Response
+     * @return Response
      */
     public function editAction(Request $request, SiteCredential $siteCredential)
     {
@@ -83,26 +104,25 @@ class SiteCredentialController extends Controller
         $this->checkUserAction($siteCredential);
 
         $deleteForm = $this->createDeleteForm($siteCredential);
-        $editForm = $this->createForm('Wallabag\CoreBundle\Form\Type\SiteCredentialType', $siteCredential);
+        $editForm = $this->createForm(SiteCredentialType::class, $siteCredential);
         $editForm->handleRequest($request);
 
         if ($editForm->isSubmitted() && $editForm->isValid()) {
-            $siteCredential->setUsername($this->get('wallabag_core.helper.crypto_proxy')->crypt($siteCredential->getUsername()));
-            $siteCredential->setPassword($this->get('wallabag_core.helper.crypto_proxy')->crypt($siteCredential->getPassword()));
+            $siteCredential->setUsername($this->cryptoProxy->crypt($siteCredential->getUsername()));
+            $siteCredential->setPassword($this->cryptoProxy->crypt($siteCredential->getPassword()));
 
-            $em = $this->getDoctrine()->getManager();
-            $em->persist($siteCredential);
-            $em->flush();
+            $this->entityManager->persist($siteCredential);
+            $this->entityManager->flush();
 
-            $this->get('session')->getFlashBag()->add(
+            $this->addFlash(
                 'notice',
-                $this->get('translator')->trans('flashes.site_credential.notice.updated', ['%host%' => $siteCredential->getHost()])
+                $this->translator->trans('flashes.site_credential.notice.updated', ['%host%' => $siteCredential->getHost()])
             );
 
             return $this->redirectToRoute('site_credentials_index');
         }
 
-        return $this->render('WallabagCoreBundle:SiteCredential:edit.html.twig', [
+        return $this->render('@WallabagCore/SiteCredential/edit.html.twig', [
             'credential' => $siteCredential,
             'edit_form' => $editForm->createView(),
             'delete_form' => $deleteForm->createView(),
@@ -114,7 +134,7 @@ class SiteCredentialController extends Controller
      *
      * @Route("/{id}", name="site_credentials_delete", methods={"DELETE"})
      *
-     * @return \Symfony\Component\HttpFoundation\RedirectResponse
+     * @return RedirectResponse
      */
     public function deleteAction(Request $request, SiteCredential $siteCredential)
     {
@@ -126,14 +146,13 @@ class SiteCredentialController extends Controller
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            $this->get('session')->getFlashBag()->add(
+            $this->addFlash(
                 'notice',
-                $this->get('translator')->trans('flashes.site_credential.notice.deleted', ['%host%' => $siteCredential->getHost()])
+                $this->translator->trans('flashes.site_credential.notice.deleted', ['%host%' => $siteCredential->getHost()])
             );
 
-            $em = $this->getDoctrine()->getManager();
-            $em->remove($siteCredential);
-            $em->flush();
+            $this->entityManager->remove($siteCredential);
+            $this->entityManager->flush();
         }
 
         return $this->redirectToRoute('site_credentials_index');
@@ -144,7 +163,7 @@ class SiteCredentialController extends Controller
      */
     private function isSiteCredentialsEnabled()
     {
-        if (!$this->get('craue_config')->get('restricted_access')) {
+        if (!$this->craueConfig->get('restricted_access')) {
             throw $this->createNotFoundException('Feature "restricted_access" is disabled, controllers too.');
         }
     }
@@ -154,7 +173,7 @@ class SiteCredentialController extends Controller
      *
      * @param SiteCredential $siteCredential The site credential entity
      *
-     * @return \Symfony\Component\Form\Form The form
+     * @return Form The form
      */
     private function createDeleteForm(SiteCredential $siteCredential)
     {

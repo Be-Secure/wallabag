@@ -2,6 +2,7 @@
 
 namespace Wallabag\CoreBundle\Helper;
 
+use enshrined\svgSanitize\Sanitizer;
 use GuzzleHttp\Psr7\Uri;
 use GuzzleHttp\Psr7\UriResolver;
 use Http\Client\Common\HttpMethodsClient;
@@ -14,16 +15,16 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DomCrawler\Crawler;
 use Symfony\Component\Finder\Finder;
-use Symfony\Component\HttpFoundation\File\MimeType\MimeTypeExtensionGuesser;
+use Symfony\Component\Mime\MimeTypes;
 
 class DownloadImages
 {
-    const REGENERATE_PICTURES_QUALITY = 80;
+    public const REGENERATE_PICTURES_QUALITY = 80;
 
     private $client;
     private $baseFolder;
     private $logger;
-    private $mimeGuesser;
+    private $mimeTypes;
     private $wallabagUrl;
 
     public function __construct(HttpClient $client, $baseFolder, $wallabagUrl, LoggerInterface $logger, MessageFactory $messageFactory = null)
@@ -32,7 +33,7 @@ class DownloadImages
         $this->baseFolder = $baseFolder;
         $this->wallabagUrl = rtrim($wallabagUrl, '/');
         $this->logger = $logger;
-        $this->mimeGuesser = new MimeTypeExtensionGuesser();
+        $this->mimeTypes = new MimeTypes();
 
         $this->setFolder();
     }
@@ -146,6 +147,32 @@ class DownloadImages
 
         $hashImage = hash('crc32', $absolutePath);
         $localPath = $folderPath . '/' . $hashImage . '.' . $ext;
+        $urlPath = $this->wallabagUrl . '/assets/images/' . $relativePath . '/' . $hashImage . '.' . $ext;
+
+        // custom case for SVG (because GD doesn't support SVG)
+        if ('svg' === $ext) {
+            try {
+                $sanitizer = new Sanitizer();
+                $sanitizer->minify(true);
+                $sanitizer->removeRemoteReferences(true);
+                $cleanSVG = $sanitizer->sanitize((string) $res->getBody());
+
+                // add an extra validation by checking about `<svg `
+                if (false === $cleanSVG || false === strpos($cleanSVG, '<svg ')) {
+                    $this->logger->error('DownloadImages: Bad SVG given', ['path' => $imagePath]);
+
+                    return false;
+                }
+
+                file_put_contents($localPath, $cleanSVG);
+
+                return $urlPath;
+            } catch (\Exception $e) {
+                $this->logger->error('DownloadImages: Error while sanitize SVG', ['path' => $imagePath, 'message' => $e->getMessage()]);
+
+                return false;
+            }
+        }
 
         try {
             $im = imagecreatefromstring((string) $res->getBody());
@@ -162,7 +189,7 @@ class DownloadImages
         switch ($ext) {
             case 'gif':
                 // use Imagick if available to keep GIF animation
-                if (class_exists('\\Imagick')) {
+                if (class_exists(\Imagick::class)) {
                     try {
                         $imagick = new \Imagick();
                         $imagick->readImageBlob($res->getBody());
@@ -196,7 +223,7 @@ class DownloadImages
 
         imagedestroy($im);
 
-        return $this->wallabagUrl . '/assets/images/' . $relativePath . '/' . $hashImage . '.' . $ext;
+        return $urlPath;
     }
 
     /**
@@ -328,7 +355,7 @@ class DownloadImages
      */
     private function getExtensionFromResponse(ResponseInterface $res, $imagePath)
     {
-        $ext = $this->mimeGuesser->guess(current($res->getHeader('content-type')));
+        $ext = current($this->mimeTypes->getExtensions(current($res->getHeader('content-type'))));
         $this->logger->debug('DownloadImages: Checking extension', ['ext' => $ext, 'header' => $res->getHeader('content-type')]);
 
         // ok header doesn't have the extension, try a different way
@@ -351,7 +378,7 @@ class DownloadImages
             $this->logger->debug('DownloadImages: Checking extension (alternative)', ['ext' => $ext]);
         }
 
-        if (!\in_array($ext, ['jpeg', 'jpg', 'gif', 'png', 'webp'], true)) {
+        if (!\in_array($ext, ['jpeg', 'jpg', 'gif', 'png', 'webp', 'svg'], true)) {
             $this->logger->error('DownloadImages: Processed image with not allowed extension. Skipping: ' . $imagePath);
 
             return false;

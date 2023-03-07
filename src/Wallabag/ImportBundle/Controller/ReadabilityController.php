@@ -2,28 +2,41 @@
 
 namespace Wallabag\ImportBundle\Controller;
 
-use Symfony\Bundle\FrameworkBundle\Controller\Controller;
+use Craue\ConfigBundle\Util\Config;
+use OldSound\RabbitMqBundle\RabbitMq\Producer as RabbitMqProducer;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Contracts\Translation\TranslatorInterface;
 use Wallabag\ImportBundle\Form\Type\UploadImportType;
+use Wallabag\ImportBundle\Import\ReadabilityImport;
+use Wallabag\ImportBundle\Redis\Producer as RedisProducer;
 
-class ReadabilityController extends Controller
+class ReadabilityController extends AbstractController
 {
+    private RabbitMqProducer $rabbitMqProducer;
+    private RedisProducer $redisProducer;
+
+    public function __construct(RabbitMqProducer $rabbitMqProducer, RedisProducer $redisProducer)
+    {
+        $this->rabbitMqProducer = $rabbitMqProducer;
+        $this->redisProducer = $redisProducer;
+    }
+
     /**
      * @Route("/readability", name="import_readability")
      */
-    public function indexAction(Request $request)
+    public function indexAction(Request $request, ReadabilityImport $readability, Config $craueConfig, TranslatorInterface $translator)
     {
         $form = $this->createForm(UploadImportType::class);
         $form->handleRequest($request);
 
-        $readability = $this->get('wallabag_import.readability.import');
         $readability->setUser($this->getUser());
 
-        if ($this->get('craue_config')->get('import_with_rabbitmq')) {
-            $readability->setProducer($this->get('old_sound_rabbit_mq.import_readability_producer'));
-        } elseif ($this->get('craue_config')->get('import_with_redis')) {
-            $readability->setProducer($this->get('wallabag_import.producer.redis.readability'));
+        if ($craueConfig->get('import_with_rabbitmq')) {
+            $readability->setProducer($this->rabbitMqProducer);
+        } elseif ($craueConfig->get('import_with_redis')) {
+            $readability->setProducer($this->redisProducer);
         }
 
         if ($form->isSubmitted() && $form->isValid()) {
@@ -41,13 +54,13 @@ class ReadabilityController extends Controller
 
                 if (true === $res) {
                     $summary = $readability->getSummary();
-                    $message = $this->get('translator')->trans('flashes.import.notice.summary', [
+                    $message = $translator->trans('flashes.import.notice.summary', [
                         '%imported%' => $summary['imported'],
                         '%skipped%' => $summary['skipped'],
                     ]);
 
                     if (0 < $summary['queued']) {
-                        $message = $this->get('translator')->trans('flashes.import.notice.summary_with_queue', [
+                        $message = $translator->trans('flashes.import.notice.summary_with_queue', [
                             '%queued%' => $summary['queued'],
                         ]);
                     }
@@ -55,21 +68,15 @@ class ReadabilityController extends Controller
                     unlink($this->getParameter('wallabag_import.resource_dir') . '/' . $name);
                 }
 
-                $this->get('session')->getFlashBag()->add(
-                    'notice',
-                    $message
-                );
+                $this->addFlash('notice', $message);
 
                 return $this->redirect($this->generateUrl('homepage'));
             }
 
-            $this->get('session')->getFlashBag()->add(
-                'notice',
-                'flashes.import.notice.failed_on_file'
-            );
+            $this->addFlash('notice', 'flashes.import.notice.failed_on_file');
         }
 
-        return $this->render('WallabagImportBundle:Readability:index.html.twig', [
+        return $this->render('@WallabagImport/Readability/index.html.twig', [
             'form' => $form->createView(),
             'import' => $readability,
         ]);

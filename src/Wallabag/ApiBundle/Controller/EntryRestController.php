@@ -2,19 +2,29 @@
 
 namespace Wallabag\ApiBundle\Controller;
 
-use Hateoas\Configuration\Route;
+use Hateoas\Configuration\Route as HateoasRoute;
 use Hateoas\Representation\Factory\PagerfantaFactory;
-use Nelmio\ApiDocBundle\Annotation\ApiDoc;
+use Nelmio\ApiDocBundle\Annotation\Operation;
+use OpenApi\Annotations as OA;
+use Pagerfanta\Pagerfanta;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
+use Symfony\Component\Routing\Annotation\Route;
 use Wallabag\CoreBundle\Entity\Entry;
 use Wallabag\CoreBundle\Entity\Tag;
 use Wallabag\CoreBundle\Event\EntryDeletedEvent;
 use Wallabag\CoreBundle\Event\EntrySavedEvent;
+use Wallabag\CoreBundle\Helper\ContentProxy;
+use Wallabag\CoreBundle\Helper\EntriesExport;
+use Wallabag\CoreBundle\Helper\TagsAssigner;
 use Wallabag\CoreBundle\Helper\UrlHasher;
+use Wallabag\CoreBundle\Repository\EntryRepository;
+use Wallabag\CoreBundle\Repository\TagRepository;
 
 class EntryRestController extends WallabagRestController
 {
@@ -25,22 +35,61 @@ class EntryRestController extends WallabagRestController
      *
      * @todo Remove that `return_id` in the next major release
      *
-     * @ApiDoc(
-     *       parameters={
-     *          {"name"="return_id", "dataType"="string", "required"=false, "format"="1 or 0", "description"="Set 1 if you want to retrieve ID in case entry(ies) exists, 0 by default"},
-     *          {"name"="url", "dataType"="string", "required"=true, "format"="An url", "description"="DEPRECATED, use hashed_url instead"},
-     *          {"name"="urls", "dataType"="string", "required"=false, "format"="An array of urls (?urls[]=http...&urls[]=http...)", "description"="DEPRECATED, use hashed_urls instead"},
-     *          {"name"="hashed_url", "dataType"="string", "required"=false, "format"="A hashed url", "description"="Hashed url using SHA1 to check if it exists"},
-     *          {"name"="hashed_urls", "dataType"="string", "required"=false, "format"="An array of hashed urls (?hashed_urls[]=xxx...&hashed_urls[]=xxx...)", "description"="An array of hashed urls using SHA1 to check if they exist"}
-     *       }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Check if an entry exist by url.",
+     *     @OA\Parameter(
+     *         name="return_id",
+     *         in="query",
+     *         description="Set 1 if you want to retrieve ID in case entry(ies) exists, 0 by default",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             enum={"1", "0"},
+     *             default="0"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="url",
+     *         in="query",
+     *         description="DEPRECATED, use hashed_url instead. An url",
+     *         required=true,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Parameter(
+     *         name="urls",
+     *         in="query",
+     *         description="DEPRECATED, use hashed_urls instead. An array of urls (?urls[]=http...&urls[]=http...)",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Parameter(
+     *         name="hashed_url",
+     *         in="query",
+     *         description="Hashed url using SHA1 to check if it exists. A hashed url",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Parameter(
+     *         name="hashed_urls",
+     *         in="query",
+     *         description="An array of hashed urls using SHA1 to check if they exist. An array of hashed urls (?hashed_urls[]=xxx...&hashed_urls[]=xxx...)",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/exists.{_format}", methods={"GET"}, name="api_get_entries_exists", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
-    public function getEntriesExistsAction(Request $request)
+    public function getEntriesExistsAction(Request $request, EntryRepository $entryRepository)
     {
         $this->validateAuthentication();
-        $repo = $this->getDoctrine()->getRepository('WallabagCoreBundle:Entry');
 
         $returnId = (null === $request->query->get('return_id')) ? false : (bool) $request->query->get('return_id');
 
@@ -68,7 +117,7 @@ class EntryRestController extends WallabagRestController
         }
 
         $results = array_fill_keys($hashedUrls, null);
-        $res = $repo->findByUserIdAndBatchHashedUrls($this->getUser()->getId(), $hashedUrls);
+        $res = $entryRepository->findByUserIdAndBatchHashedUrls($this->getUser()->getId(), $hashedUrls);
         foreach ($res as $e) {
             $_hashedUrl = array_keys($hashedUrls, 'blah', true);
             if ([] !== array_keys($hashedUrls, $e['hashedUrl'], true)) {
@@ -101,24 +150,136 @@ class EntryRestController extends WallabagRestController
     /**
      * Retrieve all entries. It could be filtered by many options.
      *
-     * @ApiDoc(
-     *       parameters={
-     *          {"name"="archive", "dataType"="integer", "required"=false, "format"="1 or 0, all entries by default", "description"="filter by archived status."},
-     *          {"name"="starred", "dataType"="integer", "required"=false, "format"="1 or 0, all entries by default", "description"="filter by starred status."},
-     *          {"name"="sort", "dataType"="string", "required"=false, "format"="'created' or 'updated' or 'archived', default 'created'", "description"="sort entries by date."},
-     *          {"name"="order", "dataType"="string", "required"=false, "format"="'asc' or 'desc', default 'desc'", "description"="order of sort."},
-     *          {"name"="page", "dataType"="integer", "required"=false, "format"="default '1'", "description"="what page you want."},
-     *          {"name"="perPage", "dataType"="integer", "required"=false, "format"="default'30'", "description"="results per page."},
-     *          {"name"="tags", "dataType"="string", "required"=false, "format"="api,rest", "description"="a list of tags url encoded. Will returns entries that matches ALL tags."},
-     *          {"name"="since", "dataType"="integer", "required"=false, "format"="default '0'", "description"="The timestamp since when you want entries updated."},
-     *          {"name"="public", "dataType"="integer", "required"=false, "format"="1 or 0, all entries by default", "description"="filter by entries with a public link"},
-     *          {"name"="detail", "dataType"="string", "required"=false, "format"="metadata or full, metadata by default", "description"="include content field if 'full'. 'full' by default for backward compatibility."},
-     *       }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Retrieve all entries. It could be filtered by many options.",
+     *     @OA\Parameter(
+     *         name="archive",
+     *         in="query",
+     *         description="filter by archived status. all entries by default.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             enum={"1", "0"},
+     *             default="0"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="starred",
+     *         in="query",
+     *         description="filter by starred status. all entries by default",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             enum={"1", "0"},
+     *             default="0"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="sort",
+     *         in="query",
+     *         description="sort entries by date.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             enum={"created", "updated", "archived"},
+     *             default="created"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="order",
+     *         in="query",
+     *         description="order of sort.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             enum={"asc", "desc"},
+     *             default="desc"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="page",
+     *         in="query",
+     *         description="what page you want.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             default=1
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="perPage",
+     *         in="query",
+     *         description="results per page.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             default=30
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="tags",
+     *         in="query",
+     *         description="a comma-seperated list of tags url encoded. Will returns entries that matches ALL tags.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             example="api,rest"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="since",
+     *         in="query",
+     *         description="The timestamp since when you want entries updated.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             default=0
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="public",
+     *         in="query",
+     *         description="filter by entries with a public link. all entries by default",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             enum={"1", "0"},
+     *             default="0"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="detail",
+     *         in="query",
+     *         description="include content field if 'full'. 'full' by default for backward compatibility.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             enum={"metadata", "full"},
+     *             default="full"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="domain_name",
+     *         in="query",
+     *         description="filter entries with the given domain name",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             example="example.com",
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries.{_format}", methods={"GET"}, name="api_get_entries", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
-    public function getEntriesAction(Request $request)
+    public function getEntriesAction(Request $request, EntryRepository $entryRepository)
     {
         $this->validateAuthentication();
 
@@ -132,10 +293,11 @@ class EntryRestController extends WallabagRestController
         $tags = \is_array($request->query->get('tags')) ? '' : (string) $request->query->get('tags', '');
         $since = $request->query->get('since', 0);
         $detail = strtolower($request->query->get('detail', 'full'));
+        $domainName = (null === $request->query->get('domain_name')) ? '' : (string) $request->query->get('domain_name');
 
         try {
-            /** @var \Pagerfanta\Pagerfanta $pager */
-            $pager = $this->get('wallabag_core.entry_repository')->findEntries(
+            /** @var Pagerfanta $pager */
+            $pager = $entryRepository->findEntries(
                 $this->getUser()->getId(),
                 $isArchived,
                 $isStarred,
@@ -144,7 +306,8 @@ class EntryRestController extends WallabagRestController
                 $order,
                 $since,
                 $tags,
-                $detail
+                $detail,
+                $domainName
             );
         } catch (\Exception $e) {
             throw new BadRequestHttpException($e->getMessage());
@@ -156,7 +319,7 @@ class EntryRestController extends WallabagRestController
         $pagerfantaFactory = new PagerfantaFactory('page', 'perPage');
         $paginatedCollection = $pagerfantaFactory->createRepresentation(
             $pager,
-            new Route(
+            new HateoasRoute(
                 'api_get_entries',
                 [
                     'archive' => $isArchived,
@@ -180,11 +343,26 @@ class EntryRestController extends WallabagRestController
     /**
      * Retrieve a single entry.
      *
-     * @ApiDoc(
-     *      requirements={
-     *          {"name"="entry", "dataType"="integer", "requirement"="\w+", "description"="The entry ID"}
-     *      }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Retrieve a single entry.",
+     *     @OA\Parameter(
+     *         name="entry",
+     *         in="path",
+     *         description="The entry ID",
+     *         required=true,
+     *         @OA\Schema(
+     *             type="integer",
+     *             pattern="\w+",
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/{entry}.{_format}", methods={"GET"}, name="api_get_entry", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
@@ -199,20 +377,45 @@ class EntryRestController extends WallabagRestController
     /**
      * Retrieve a single entry as a predefined format.
      *
-     * @ApiDoc(
-     *      requirements={
-     *          {"name"="entry", "dataType"="integer", "requirement"="\w+", "description"="The entry ID"}
-     *      }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Retrieve a single entry as a predefined format.",
+     *     @OA\Parameter(
+     *         name="entry",
+     *         in="path",
+     *         description="The entry ID",
+     *         required=true,
+     *         @OA\Schema(
+     *             type="integer",
+     *             pattern="\w+",
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="_format",
+     *         in="path",
+     *         description="",
+     *         required=true,
+     *         @OA\Schema(
+     *             type="string",
+     *             enum={"xml", "json", "txt", "csv", "pdf", "epub", "mobi"},
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/{entry}/export.{_format}", methods={"GET"}, name="api_get_entry_export", defaults={"_format": "json"})
      *
      * @return Response
      */
-    public function getEntryExportAction(Entry $entry, Request $request)
+    public function getEntryExportAction(Entry $entry, Request $request, EntriesExport $entriesExport)
     {
         $this->validateAuthentication();
         $this->validateUserAccess($entry->getUser()->getId());
 
-        return $this->get('wallabag_core.helper.entries_export')
+        return $entriesExport
             ->setEntries($entry)
             ->updateTitle('entry')
             ->updateAuthor('entry')
@@ -222,15 +425,27 @@ class EntryRestController extends WallabagRestController
     /**
      * Handles an entries list and delete URL.
      *
-     * @ApiDoc(
-     *       parameters={
-     *          {"name"="urls", "dataType"="string", "required"=true, "format"="A JSON array of urls [{'url': 'http://...'}, {'url': 'http://...'}]", "description"="Urls (as an array) to delete."}
-     *       }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Handles an entries list and delete URL.",
+     *     @OA\Parameter(
+     *         name="urls",
+     *         in="query",
+     *         description="Urls (as an array) to delete. A JSON array of urls [{'url': 'http://...'}, {'url': 'http://...'}]",
+     *         required=true,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/list.{_format}", methods={"DELETE"}, name="api_delete_entries_list", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
-    public function deleteEntriesListAction(Request $request)
+    public function deleteEntriesListAction(Request $request, EntryRepository $entryRepository, EventDispatcherInterface $eventDispatcher)
     {
         $this->validateAuthentication();
 
@@ -244,7 +459,7 @@ class EntryRestController extends WallabagRestController
 
         // handle multiple urls
         foreach ($urls as $key => $url) {
-            $entry = $this->get('wallabag_core.entry_repository')->findByUrlAndUserId(
+            $entry = $entryRepository->findByUrlAndUserId(
                 $url,
                 $this->getUser()->getId()
             );
@@ -253,11 +468,10 @@ class EntryRestController extends WallabagRestController
 
             if (false !== $entry) {
                 // entry deleted, dispatch event about it!
-                $this->get('event_dispatcher')->dispatch(EntryDeletedEvent::NAME, new EntryDeletedEvent($entry));
+                $eventDispatcher->dispatch(new EntryDeletedEvent($entry), EntryDeletedEvent::NAME);
 
-                $em = $this->getDoctrine()->getManager();
-                $em->remove($entry);
-                $em->flush();
+                $this->entityManager->remove($entry);
+                $this->entityManager->flush();
             }
 
             $results[$key]['entry'] = $entry instanceof Entry ? true : false;
@@ -269,23 +483,35 @@ class EntryRestController extends WallabagRestController
     /**
      * Handles an entries list and create URL.
      *
-     * @ApiDoc(
-     *       parameters={
-     *          {"name"="urls", "dataType"="string", "required"=true, "format"="A JSON array of urls [{'url': 'http://...'}, {'url': 'http://...'}]", "description"="Urls (as an array) to create."}
-     *       }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Handles an entries list and create URL.",
+     *     @OA\Parameter(
+     *         name="urls",
+     *         in="query",
+     *         description="Urls (as an array) to create. A JSON array of urls [{'url': 'http://...'}, {'url': 'http://...'}]",
+     *         required=true,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/lists.{_format}", methods={"POST"}, name="api_post_entries_list", defaults={"_format": "json"})
      *
      * @throws HttpException When limit is reached
      *
      * @return JsonResponse
      */
-    public function postEntriesListAction(Request $request)
+    public function postEntriesListAction(Request $request, EntryRepository $entryRepository, EventDispatcherInterface $eventDispatcher, ContentProxy $contentProxy)
     {
         $this->validateAuthentication();
 
         $urls = json_decode($request->query->get('urls', []));
 
-        $limit = $this->container->getParameter('wallabag_core.api_limit_mass_actions');
+        $limit = $this->getParameter('wallabag_core.api_limit_mass_actions');
 
         if (\count($urls) > $limit) {
             throw new HttpException(400, 'API limit reached');
@@ -298,7 +524,7 @@ class EntryRestController extends WallabagRestController
 
         // handle multiple urls
         foreach ($urls as $key => $url) {
-            $entry = $this->get('wallabag_core.entry_repository')->findByUrlAndUserId(
+            $entry = $entryRepository->findByUrlAndUserId(
                 $url,
                 $this->getUser()->getId()
             );
@@ -308,17 +534,16 @@ class EntryRestController extends WallabagRestController
             if (false === $entry) {
                 $entry = new Entry($this->getUser());
 
-                $this->get('wallabag_core.content_proxy')->updateEntry($entry, $url);
+                $contentProxy->updateEntry($entry, $url);
             }
 
-            $em = $this->getDoctrine()->getManager();
-            $em->persist($entry);
-            $em->flush();
+            $this->entityManager->persist($entry);
+            $this->entityManager->flush();
 
             $results[$key]['entry'] = $entry instanceof Entry ? $entry->getId() : false;
 
             // entry saved, dispatch event about it!
-            $this->get('event_dispatcher')->dispatch(EntrySavedEvent::NAME, new EntrySavedEvent($entry));
+            $eventDispatcher->dispatch(new EntrySavedEvent($entry), EntrySavedEvent::NAME);
         }
 
         return $this->sendResponse($results);
@@ -330,32 +555,146 @@ class EntryRestController extends WallabagRestController
      * If you want to provide the HTML content (which means wallabag won't fetch it from the url), you must provide `content`, `title` & `url` fields **non-empty**.
      * Otherwise, content will be fetched as normal from the url and values will be overwritten.
      *
-     * @ApiDoc(
-     *       parameters={
-     *          {"name"="url", "dataType"="string", "required"=true, "format"="http://www.test.com/article.html", "description"="Url for the entry."},
-     *          {"name"="title", "dataType"="string", "required"=false, "description"="Optional, we'll get the title from the page."},
-     *          {"name"="tags", "dataType"="string", "required"=false, "format"="tag1,tag2,tag3", "description"="a comma-separated list of tags."},
-     *          {"name"="archive", "dataType"="integer", "required"=false, "format"="1 or 0", "description"="entry already archived"},
-     *          {"name"="starred", "dataType"="integer", "required"=false, "format"="1 or 0", "description"="entry already starred"},
-     *          {"name"="content", "dataType"="string", "required"=false, "description"="Content of the entry"},
-     *          {"name"="language", "dataType"="string", "required"=false, "description"="Language of the entry"},
-     *          {"name"="preview_picture", "dataType"="string", "required"=false, "description"="Preview picture of the entry"},
-     *          {"name"="published_at", "dataType"="datetime|integer", "format"="YYYY-MM-DDTHH:II:SS+TZ or a timestamp", "required"=false, "description"="Published date of the entry"},
-     *          {"name"="authors", "dataType"="string", "format"="Name Firstname,author2,author3", "required"=false, "description"="Authors of the entry"},
-     *          {"name"="public", "dataType"="integer", "required"=false, "format"="1 or 0", "description"="will generate a public link for the entry"},
-     *          {"name"="origin_url", "dataType"="string", "required"=false, "format"="http://www.test.com/article.html", "description"="Origin url for the entry (from where you found it)."},
-     *       }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Create an entry.",
+     *     @OA\Parameter(
+     *         name="url",
+     *         in="query",
+     *         description="Url for the entry.",
+     *         required=true,
+     *         @OA\Schema(
+     *             type="string",
+     *             example="http://www.test.com/article.html"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="title",
+     *         in="query",
+     *         description="Optional, we'll get the title from the page.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="tags",
+     *         in="query",
+     *         description="a comma-separated list of tags.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             example="tag1,tag2,tag3"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="archive",
+     *         in="query",
+     *         description="entry already archived",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             enum={"1", "0"},
+     *             default="0"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="starred",
+     *         in="query",
+     *         description="entry already starred",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             enum={"1", "0"},
+     *             default="0"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="content",
+     *         in="query",
+     *         description="Content of the entry",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="language",
+     *         in="query",
+     *         description="Language of the entry",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="preview_picture",
+     *         in="query",
+     *         description="Preview picture of the entry",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="published_at",
+     *         in="query",
+     *         description="Published date of the entry",
+     *         required=false,
+     *
+     *         @OA\Schema(
+     *             type="string",
+     *             format="YYYY-MM-DDTHH:II:SS+TZ or a timestamp (integer)",
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="authors",
+     *         in="query",
+     *         description="Authors of the entry",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             example="Name Firstname,author2,author3"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="public",
+     *         in="query",
+     *         description="will generate a public link for the entry",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             enum={"1", "0"},
+     *             default="0"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="origin_url",
+     *         in="query",
+     *         description="Origin url for the entry (from where you found it).",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             example="http://www.test.com/article.html"
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries.{_format}", methods={"POST"}, name="api_post_entries", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
-    public function postEntriesAction(Request $request)
+    public function postEntriesAction(Request $request, EntryRepository $entryRepository, ContentProxy $contentProxy, LoggerInterface $logger, TagsAssigner $tagsAssigner, EventDispatcherInterface $eventDispatcher)
     {
         $this->validateAuthentication();
 
         $url = $request->request->get('url');
 
-        $entry = $this->get('wallabag_core.entry_repository')->findByUrlAndUserId(
+        $entry = $entryRepository->findByUrlAndUserId(
             $url,
             $this->getUser()->getId()
         );
@@ -368,7 +707,7 @@ class EntryRestController extends WallabagRestController
         $data = $this->retrieveValueFromRequest($request);
 
         try {
-            $this->get('wallabag_core.content_proxy')->updateEntry(
+            $contentProxy->updateEntry(
                 $entry,
                 $entry->getUrl(),
                 [
@@ -383,7 +722,7 @@ class EntryRestController extends WallabagRestController
                 ]
             );
         } catch (\Exception $e) {
-            $this->get('logger')->error('Error while saving an entry', [
+            $logger->error('Error while saving an entry', [
                 'exception' => $e,
                 'entry' => $entry,
             ]);
@@ -398,7 +737,7 @@ class EntryRestController extends WallabagRestController
         }
 
         if (!empty($data['tags'])) {
-            $this->get('wallabag_core.tags_assigner')->assignTagsToEntry($entry, $data['tags']);
+            $tagsAssigner->assignTagsToEntry($entry, $data['tags']);
         }
 
         if (!empty($data['origin_url'])) {
@@ -414,19 +753,18 @@ class EntryRestController extends WallabagRestController
         }
 
         if (empty($entry->getDomainName())) {
-            $this->get('wallabag_core.content_proxy')->setEntryDomainName($entry);
+            $contentProxy->setEntryDomainName($entry);
         }
 
         if (empty($entry->getTitle())) {
-            $this->get('wallabag_core.content_proxy')->setDefaultEntryTitle($entry);
+            $contentProxy->setDefaultEntryTitle($entry);
         }
 
-        $em = $this->getDoctrine()->getManager();
-        $em->persist($entry);
-        $em->flush();
+        $this->entityManager->persist($entry);
+        $this->entityManager->flush();
 
         // entry saved, dispatch event about it!
-        $this->get('event_dispatcher')->dispatch(EntrySavedEvent::NAME, new EntrySavedEvent($entry));
+        $eventDispatcher->dispatch(new EntrySavedEvent($entry), EntrySavedEvent::NAME);
 
         return $this->sendResponse($entry);
     }
@@ -434,33 +772,134 @@ class EntryRestController extends WallabagRestController
     /**
      * Change several properties of an entry.
      *
-     * @ApiDoc(
-     *      requirements={
-     *          {"name"="entry", "dataType"="integer", "requirement"="\w+", "description"="The entry ID"}
-     *      },
-     *      parameters={
-     *          {"name"="title", "dataType"="string", "required"=false},
-     *          {"name"="tags", "dataType"="string", "required"=false, "format"="tag1,tag2,tag3", "description"="a comma-separated list of tags."},
-     *          {"name"="archive", "dataType"="integer", "required"=false, "format"="1 or 0", "description"="archived the entry."},
-     *          {"name"="starred", "dataType"="integer", "required"=false, "format"="1 or 0", "description"="starred the entry."},
-     *          {"name"="content", "dataType"="string", "required"=false, "description"="Content of the entry"},
-     *          {"name"="language", "dataType"="string", "required"=false, "description"="Language of the entry"},
-     *          {"name"="preview_picture", "dataType"="string", "required"=false, "description"="Preview picture of the entry"},
-     *          {"name"="published_at", "dataType"="datetime|integer", "format"="YYYY-MM-DDTHH:II:SS+TZ or a timestamp", "required"=false, "description"="Published date of the entry"},
-     *          {"name"="authors", "dataType"="string", "format"="Name Firstname,author2,author3", "required"=false, "description"="Authors of the entry"},
-     *          {"name"="public", "dataType"="integer", "required"=false, "format"="1 or 0", "description"="will generate a public link for the entry"},
-     *          {"name"="origin_url", "dataType"="string", "required"=false, "format"="http://www.test.com/article.html", "description"="Origin url for the entry (from where you found it)."},
-     *      }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Change several properties of an entry.",
+     *     @OA\Parameter(
+     *         name="entry",
+     *         in="path",
+     *         description="The entry ID",
+     *         required=true,
+     *         @OA\Schema(
+     *             type="integer",
+     *             pattern="\w+",
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="title",
+     *         in="query",
+     *         description="",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Parameter(
+     *         name="tags",
+     *         in="query",
+     *         description="a comma-separated list of tags.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             example="tag1,tag2,tag3",
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="archive",
+     *         in="query",
+     *         description="archived the entry.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             enum={"1", "0"},
+     *             default="0"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="starred",
+     *         in="query",
+     *         description="starred the entry.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             enum={"1", "0"},
+     *             default="0"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="content",
+     *         in="query",
+     *         description="Content of the entry",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Parameter(
+     *         name="language",
+     *         in="query",
+     *         description="Language of the entry",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Parameter(
+     *         name="preview_picture",
+     *         in="query",
+     *         description="Preview picture of the entry",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Parameter(
+     *         name="published_at",
+     *         in="query",
+     *         description="Published date of the entry",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="datetime|integer",
+     *             format="YYYY-MM-DDTHH:II:SS+TZ or a timestamp",
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="authors",
+     *         in="query",
+     *         description="Authors of the entry",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             example="Name Firstname,author2,author3",
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="public",
+     *         in="query",
+     *         description="will generate a public link for the entry",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="integer",
+     *             enum={"1", "0"},
+     *             default="0"
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="origin_url",
+     *         in="query",
+     *         description="Origin url for the entry (from where you found it).",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             example="http://www.test.com/article.html",
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/{entry}.{_format}", methods={"PATCH"}, name="api_patch_entries", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
-    public function patchEntriesAction(Entry $entry, Request $request)
+    public function patchEntriesAction(Entry $entry, Request $request, ContentProxy $contentProxy, LoggerInterface $logger, TagsAssigner $tagsAssigner, EventDispatcherInterface $eventDispatcher)
     {
         $this->validateAuthentication();
         $this->validateUserAccess($entry->getUser()->getId());
-
-        $contentProxy = $this->get('wallabag_core.content_proxy');
 
         $data = $this->retrieveValueFromRequest($request);
 
@@ -478,7 +917,7 @@ class EntryRestController extends WallabagRestController
                     true
                 );
             } catch (\Exception $e) {
-                $this->get('logger')->error('Error while saving an entry', [
+                $logger->error('Error while saving an entry', [
                     'exception' => $e,
                     'entry' => $entry,
                 ]);
@@ -515,7 +954,7 @@ class EntryRestController extends WallabagRestController
 
         if (!empty($data['tags'])) {
             $entry->removeAllTags();
-            $this->get('wallabag_core.tags_assigner')->assignTagsToEntry($entry, $data['tags']);
+            $tagsAssigner->assignTagsToEntry($entry, $data['tags']);
         }
 
         if (null !== $data['isPublic']) {
@@ -531,19 +970,18 @@ class EntryRestController extends WallabagRestController
         }
 
         if (empty($entry->getDomainName())) {
-            $this->get('wallabag_core.content_proxy')->setEntryDomainName($entry);
+            $contentProxy->setEntryDomainName($entry);
         }
 
         if (empty($entry->getTitle())) {
-            $this->get('wallabag_core.content_proxy')->setDefaultEntryTitle($entry);
+            $contentProxy->setDefaultEntryTitle($entry);
         }
 
-        $em = $this->getDoctrine()->getManager();
-        $em->persist($entry);
-        $em->flush();
+        $this->entityManager->persist($entry);
+        $this->entityManager->flush();
 
         // entry saved, dispatch event about it!
-        $this->get('event_dispatcher')->dispatch(EntrySavedEvent::NAME, new EntrySavedEvent($entry));
+        $eventDispatcher->dispatch(new EntrySavedEvent($entry), EntrySavedEvent::NAME);
 
         return $this->sendResponse($entry);
     }
@@ -552,23 +990,38 @@ class EntryRestController extends WallabagRestController
      * Reload an entry.
      * An empty response with HTTP Status 304 will be send if we weren't able to update the content (because it hasn't changed or we got an error).
      *
-     * @ApiDoc(
-     *      requirements={
-     *          {"name"="entry", "dataType"="integer", "requirement"="\w+", "description"="The entry ID"}
-     *      }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Reload an entry.",
+     *     @OA\Parameter(
+     *         name="entry",
+     *         in="path",
+     *         description="The entry ID",
+     *         required=true,
+     *         @OA\Schema(
+     *             type="integer",
+     *             pattern="\w+",
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/{entry}/reload.{_format}", methods={"PATCH"}, name="api_patch_entries_reload", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
-    public function patchEntriesReloadAction(Entry $entry)
+    public function patchEntriesReloadAction(Entry $entry, ContentProxy $contentProxy, LoggerInterface $logger, EventDispatcherInterface $eventDispatcher)
     {
         $this->validateAuthentication();
         $this->validateUserAccess($entry->getUser()->getId());
 
         try {
-            $this->get('wallabag_core.content_proxy')->updateEntry($entry, $entry->getUrl());
+            $contentProxy->updateEntry($entry, $entry->getUrl());
         } catch (\Exception $e) {
-            $this->get('logger')->error('Error while saving an entry', [
+            $logger->error('Error while saving an entry', [
                 'exception' => $e,
                 'entry' => $entry,
             ]);
@@ -577,16 +1030,15 @@ class EntryRestController extends WallabagRestController
         }
 
         // if refreshing entry failed, don't save it
-        if ($this->container->getParameter('wallabag_core.fetching_error_message') === $entry->getContent()) {
+        if ($this->getParameter('wallabag_core.fetching_error_message') === $entry->getContent()) {
             return new JsonResponse([], 304);
         }
 
-        $em = $this->getDoctrine()->getManager();
-        $em->persist($entry);
-        $em->flush();
+        $this->entityManager->persist($entry);
+        $this->entityManager->flush();
 
         // entry saved, dispatch event about it!
-        $this->get('event_dispatcher')->dispatch(EntrySavedEvent::NAME, new EntrySavedEvent($entry));
+        $eventDispatcher->dispatch(new EntrySavedEvent($entry), EntrySavedEvent::NAME);
 
         return $this->sendResponse($entry);
     }
@@ -594,18 +1046,31 @@ class EntryRestController extends WallabagRestController
     /**
      * Delete **permanently** an entry.
      *
-     * @ApiDoc(
-     *      requirements={
-     *          {"name"="entry", "dataType"="integer", "requirement"="\w+", "description"="The entry ID"}
-     *      },
-     *      parameters={
-     *          {"name"="expect", "dataType"="string", "required"=false, "format"="id or entry", "description"="Only returns the id instead of the deleted entry's full entity if 'id' is specified. Default to entry"},
-     *      }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Delete permanently an entry.",
+     *     @OA\Parameter(
+     *         name="expect",
+     *         in="query",
+     *         description="Only returns the id instead of the deleted entry's full entity if 'id' is specified.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             enum={"id", "entry"},
+     *             default="entry"
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/{entry}.{_format}", methods={"DELETE"}, name="api_delete_entries", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
-    public function deleteEntriesAction(Entry $entry, Request $request)
+    public function deleteEntriesAction(Entry $entry, Request $request, EventDispatcherInterface $eventDispatcher)
     {
         $expect = $request->query->get('expect', 'entry');
         if (!\in_array($expect, ['id', 'entry'], true)) {
@@ -624,11 +1089,10 @@ class EntryRestController extends WallabagRestController
         }
 
         // entry deleted, dispatch event about it!
-        $this->get('event_dispatcher')->dispatch(EntryDeletedEvent::NAME, new EntryDeletedEvent($entry));
+        $eventDispatcher->dispatch(new EntryDeletedEvent($entry), EntryDeletedEvent::NAME);
 
-        $em = $this->getDoctrine()->getManager();
-        $em->remove($entry);
-        $em->flush();
+        $this->entityManager->remove($entry);
+        $this->entityManager->flush();
 
         return $response;
     }
@@ -636,11 +1100,26 @@ class EntryRestController extends WallabagRestController
     /**
      * Retrieve all tags for an entry.
      *
-     * @ApiDoc(
-     *      requirements={
-     *          {"name"="entry", "dataType"="integer", "requirement"="\w+", "description"="The entry ID"}
-     *      }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Retrieve all tags for an entry.",
+     *     @OA\Parameter(
+     *         name="entry",
+     *         in="path",
+     *         description="The entry ID",
+     *         required=true,
+     *         @OA\Schema(
+     *             type="integer",
+     *             pattern="\w+",
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/{entry}/tags.{_format}", methods={"GET"}, name="api_get_entries_tags", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
@@ -655,30 +1134,51 @@ class EntryRestController extends WallabagRestController
     /**
      * Add one or more tags to an entry.
      *
-     * @ApiDoc(
-     *      requirements={
-     *          {"name"="entry", "dataType"="integer", "requirement"="\w+", "description"="The entry ID"}
-     *      },
-     *      parameters={
-     *          {"name"="tags", "dataType"="string", "required"=false, "format"="tag1,tag2,tag3", "description"="a comma-separated list of tags."},
-     *       }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Add one or more tags to an entry.",
+     *     @OA\Parameter(
+     *         name="entry",
+     *         in="path",
+     *         description="The entry ID",
+     *         required=true,
+     *         @OA\Schema(
+     *             type="integer",
+     *             pattern="\w+",
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="tags",
+     *         in="query",
+     *         description="a comma-separated list of tags.",
+     *         required=false,
+     *         @OA\Schema(
+     *             type="string",
+     *             example="tag1,tag2,tag3",
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/{entry}/tags.{_format}", methods={"POST"}, name="api_post_entries_tags", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
-    public function postEntriesTagsAction(Request $request, Entry $entry)
+    public function postEntriesTagsAction(Request $request, Entry $entry, TagsAssigner $tagsAssigner)
     {
         $this->validateAuthentication();
         $this->validateUserAccess($entry->getUser()->getId());
 
         $tags = $request->request->get('tags', '');
         if (!empty($tags)) {
-            $this->get('wallabag_core.tags_assigner')->assignTagsToEntry($entry, $tags);
+            $tagsAssigner->assignTagsToEntry($entry, $tags);
         }
 
-        $em = $this->getDoctrine()->getManager();
-        $em->persist($entry);
-        $em->flush();
+        $this->entityManager->persist($entry);
+        $this->entityManager->flush();
 
         return $this->sendResponse($entry);
     }
@@ -686,12 +1186,36 @@ class EntryRestController extends WallabagRestController
     /**
      * Permanently remove one tag for an entry.
      *
-     * @ApiDoc(
-     *      requirements={
-     *          {"name"="tag", "dataType"="integer", "requirement"="\w+", "description"="The tag ID"},
-     *          {"name"="entry", "dataType"="integer", "requirement"="\w+", "description"="The entry ID"}
-     *      }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Permanently remove one tag for an entry.",
+     *     @OA\Parameter(
+     *         name="entry",
+     *         in="path",
+     *         description="The entry ID",
+     *         required=true,
+     *         @OA\Schema(
+     *             type="integer",
+     *             pattern="\w+",
+     *         )
+     *     ),
+     *     @OA\Parameter(
+     *         name="tag",
+     *         in="path",
+     *         description="The tag ID",
+     *         required=true,
+     *         @OA\Schema(
+     *             type="integer",
+     *             pattern="\w+",
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/{entry}/tags/{tag}.{_format}", methods={"DELETE"}, name="api_delete_entries_tags", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
@@ -701,9 +1225,9 @@ class EntryRestController extends WallabagRestController
         $this->validateUserAccess($entry->getUser()->getId());
 
         $entry->removeTag($tag);
-        $em = $this->getDoctrine()->getManager();
-        $em->persist($entry);
-        $em->flush();
+
+        $this->entityManager->persist($entry);
+        $this->entityManager->flush();
 
         return $this->sendResponse($entry);
     }
@@ -711,15 +1235,27 @@ class EntryRestController extends WallabagRestController
     /**
      * Handles an entries list delete tags from them.
      *
-     * @ApiDoc(
-     *       parameters={
-     *          {"name"="list", "dataType"="string", "required"=true, "format"="A JSON array of urls [{'url': 'http://...','tags': 'tag1, tag2'}, {'url': 'http://...','tags': 'tag1, tag2'}]", "description"="Urls (as an array) to handle."}
-     *       }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Handles an entries list delete tags from them.",
+     *     @OA\Parameter(
+     *         name="list",
+     *         in="query",
+     *         description="Urls (as an array) to handle. A JSON array of urls [{'url': 'http://...','tags': 'tag1, tag2'}, {'url': 'http://...','tags': 'tag1, tag2'}]",
+     *         required=true,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/tags/list.{_format}", methods={"DELETE"}, name="api_delete_entries_tags_list", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
-    public function deleteEntriesTagsListAction(Request $request)
+    public function deleteEntriesTagsListAction(Request $request, TagRepository $tagRepository, EntryRepository $entryRepository)
     {
         $this->validateAuthentication();
 
@@ -733,7 +1269,7 @@ class EntryRestController extends WallabagRestController
         $results = [];
 
         foreach ($list as $key => $element) {
-            $entry = $this->get('wallabag_core.entry_repository')->findByUrlAndUserId(
+            $entry = $entryRepository->findByUrlAndUserId(
                 $element->url,
                 $this->getUser()->getId()
             );
@@ -748,18 +1284,15 @@ class EntryRestController extends WallabagRestController
                 foreach ($tags as $label) {
                     $label = trim($label);
 
-                    $tag = $this->getDoctrine()
-                        ->getRepository('WallabagCoreBundle:Tag')
-                        ->findOneByLabel($label);
+                    $tag = $tagRepository->findOneByLabel($label);
 
                     if (false !== $tag) {
                         $entry->removeTag($tag);
                     }
                 }
 
-                $em = $this->getDoctrine()->getManager();
-                $em->persist($entry);
-                $em->flush();
+                $this->entityManager->persist($entry);
+                $this->entityManager->flush();
             }
         }
 
@@ -769,15 +1302,27 @@ class EntryRestController extends WallabagRestController
     /**
      * Handles an entries list and add tags to them.
      *
-     * @ApiDoc(
-     *       parameters={
-     *          {"name"="list", "dataType"="string", "required"=true, "format"="A JSON array of urls [{'url': 'http://...','tags': 'tag1, tag2'}, {'url': 'http://...','tags': 'tag1, tag2'}]", "description"="Urls (as an array) to handle."}
-     *       }
+     * @Operation(
+     *     tags={"Entries"},
+     *     summary="Handles an entries list and add tags to them.",
+     *     @OA\Parameter(
+     *         name="list",
+     *         in="query",
+     *         description="Urls (as an array) to handle. A JSON array of urls [{'url': 'http://...','tags': 'tag1, tag2'}, {'url': 'http://...','tags': 'tag1, tag2'}]",
+     *         required=true,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response="200",
+     *         description="Returned when successful"
+     *     )
      * )
+     *
+     * @Route("/api/entries/tags/lists.{_format}", methods={"POST"}, name="api_post_entries_tags_list", defaults={"_format": "json"})
      *
      * @return JsonResponse
      */
-    public function postEntriesTagsListAction(Request $request)
+    public function postEntriesTagsListAction(Request $request, EntryRepository $entryRepository, TagsAssigner $tagsAssigner)
     {
         $this->validateAuthentication();
 
@@ -791,7 +1336,7 @@ class EntryRestController extends WallabagRestController
 
         // handle multiple urls
         foreach ($list as $key => $element) {
-            $entry = $this->get('wallabag_core.entry_repository')->findByUrlAndUserId(
+            $entry = $entryRepository->findByUrlAndUserId(
                 $element->url,
                 $this->getUser()->getId()
             );
@@ -802,11 +1347,10 @@ class EntryRestController extends WallabagRestController
             $tags = $element->tags;
 
             if (false !== $entry && !(empty($tags))) {
-                $this->get('wallabag_core.tags_assigner')->assignTagsToEntry($entry, $tags);
+                $tagsAssigner->assignTagsToEntry($entry, $tags);
 
-                $em = $this->getDoctrine()->getManager();
-                $em->persist($entry);
-                $em->flush();
+                $this->entityManager->persist($entry);
+                $this->entityManager->flush();
             }
         }
 

@@ -2,10 +2,15 @@
 
 namespace Tests\Wallabag\CoreBundle\Controller;
 
+use Doctrine\ORM\EntityManagerInterface;
 use Tests\Wallabag\CoreBundle\WallabagCoreTestCase;
 use Wallabag\CoreBundle\Entity\Entry;
 use Wallabag\CoreBundle\Entity\Tag;
+use Wallabag\UserBundle\Entity\User;
 
+/**
+ * @group Tag
+ */
 class TagControllerTest extends WallabagCoreTestCase
 {
     public $tagName = 'opensource';
@@ -14,7 +19,7 @@ class TagControllerTest extends WallabagCoreTestCase
     public function testList()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $client->request('GET', '/tag/list');
 
@@ -24,7 +29,7 @@ class TagControllerTest extends WallabagCoreTestCase
     public function testAddTagToEntry()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $entry = new Entry($this->getLoggedInUser());
         $entry->setUrl('http://0.0.0.0/foo');
@@ -70,11 +75,11 @@ class TagControllerTest extends WallabagCoreTestCase
     public function testAddMultipleTagToEntry()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $entry = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findByUrlAndUserId('http://0.0.0.0/entry2', $this->getLoggedInUserId());
 
         $crawler = $client->request('GET', '/view/' . $entry->getId());
@@ -89,8 +94,8 @@ class TagControllerTest extends WallabagCoreTestCase
         $this->assertSame(302, $client->getResponse()->getStatusCode());
 
         $newEntry = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->find($entry->getId());
 
         $tags = $newEntry->getTags()->toArray();
@@ -106,7 +111,7 @@ class TagControllerTest extends WallabagCoreTestCase
     public function testRemoveTagFromEntry()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $tag = new Tag();
         $tag->setLabel($this->tagName);
@@ -134,26 +139,75 @@ class TagControllerTest extends WallabagCoreTestCase
         $this->assertSame(404, $client->getResponse()->getStatusCode());
 
         $tag = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Tag')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Tag::class)
             ->findOneByLabel($this->tagName);
 
         $this->assertNull($tag, $this->tagName . ' was removed because it begun an orphan tag');
     }
 
+    public function testRemoveTag()
+    {
+        $this->logInAs('admin');
+        $client = $this->getTestClient();
+
+        $tag = new Tag();
+        $tag->setLabel($this->tagName);
+
+        $entry = new Entry($this->getLoggedInUser());
+        $entry->setUrl('http://0.0.0.0/foo');
+        $entry->addTag($tag);
+        $this->getEntityManager()->persist($entry);
+
+        $entry2 = new Entry($this->getLoggedInUser());
+        $entry2->setUrl('http://0.0.0.0/bar');
+        $entry2->addTag($tag);
+        $this->getEntityManager()->persist($entry2);
+        $this->getEntityManager()->flush();
+        $this->getEntityManager()->clear();
+
+        $crawler = $client->request('GET', '/tag/list');
+        $link = $crawler->filter('a[id="delete-' . $tag->getSlug() . '"]')->link();
+        $client->click($link);
+
+        $tag = $client->getContainer()
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Tag::class)
+            ->findOneByLabel($this->tagName);
+
+        $this->assertNull($tag, $this->tagName . ' was removed because it begun an orphan tag');
+
+        $user = $this->getEntityManager()
+            ->getRepository(User::class)
+            ->findOneByUserName('admin');
+
+        $entry = $client->getContainer()
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
+            ->findByUrlAndUserId('http://0.0.0.0/foo', $user->getId());
+
+        $entry2 = $client->getContainer()
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
+            ->findByUrlAndUserId('http://0.0.0.0/bar', $user->getId());
+
+        $this->assertEmpty($entry->getTagsLabel());
+        $this->assertEmpty($entry2->getTagsLabel());
+    }
+
     public function testShowEntriesForTagAction()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
         $em = $client->getContainer()
-            ->get('doctrine.orm.entity_manager');
+            ->get(EntityManagerInterface::class);
 
         $tag = new Tag();
         $tag->setLabel($this->tagName);
 
         $entry = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->findByUrlAndUserId('http://0.0.0.0/entry4', $this->getLoggedInUserId());
 
         $tag->addEntry($entry);
@@ -163,8 +217,8 @@ class TagControllerTest extends WallabagCoreTestCase
         $em->flush();
 
         $tag = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Tag')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Tag::class)
             ->findOneByEntryAndTagLabel($entry, $this->tagName);
 
         $crawler = $client->request('GET', '/tag/list/' . $tag->getSlug());
@@ -182,7 +236,7 @@ class TagControllerTest extends WallabagCoreTestCase
         $newTagLabel = 'rename label';
 
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $tag = new Tag();
         $tag->setLabel($this->tagName);
@@ -216,13 +270,13 @@ class TagControllerTest extends WallabagCoreTestCase
         $this->assertStringContainsString('flashes.tag.notice.tag_renamed', $crawler->filter('body')->extract(['_text'])[0]);
 
         $freshEntry = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->find($entry->getId());
 
         $freshEntry2 = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->find($entry2->getId());
 
         $tags = [];
@@ -240,8 +294,8 @@ class TagControllerTest extends WallabagCoreTestCase
         $this->assertFalse(array_search($tag->getLabel(), $tags, true), 'Previous tag is not attach to entries anymore.');
 
         $newTag = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Tag')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Tag::class)
             ->findByLabel($newTagLabel);
 
         $this->assertCount(1, $newTag, 'New tag exists.');
@@ -254,7 +308,7 @@ class TagControllerTest extends WallabagCoreTestCase
     {
         $tagLabel = 'same label';
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $tag = new Tag();
         $tag->setLabel($tagLabel);
@@ -280,8 +334,8 @@ class TagControllerTest extends WallabagCoreTestCase
         $this->assertStringNotContainsString('flashes.tag.notice.tag_renamed', $crawler->filter('body')->extract(['_text'])[0]);
 
         $freshEntry = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->find($entry->getId());
 
         $tags = [];
@@ -294,8 +348,8 @@ class TagControllerTest extends WallabagCoreTestCase
         $this->assertNotFalse(array_search($tag->getLabel(), $tags, true), 'Tag is still assigned to the entry.');
 
         $newTag = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Tag')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Tag::class)
             ->findByLabel($tagLabel);
 
         $this->assertCount(1, $newTag);
@@ -309,7 +363,7 @@ class TagControllerTest extends WallabagCoreTestCase
         $tagLabel = 'same label';
         $newTagLabel = 'saMe labEl';
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $tag = new Tag();
         $tag->setLabel($tagLabel);
@@ -335,8 +389,8 @@ class TagControllerTest extends WallabagCoreTestCase
         $this->assertStringNotContainsString('flashes.tag.notice.tag_renamed', $crawler->filter('body')->extract(['_text'])[0]);
 
         $freshEntry = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->find($entry->getId());
 
         $tags = [];
@@ -349,13 +403,13 @@ class TagControllerTest extends WallabagCoreTestCase
         $this->assertFalse(array_search($newTagLabel, $tags, true));
 
         $tagFromRepo = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Tag')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Tag::class)
             ->findByLabel($tagLabel);
 
         $newTagFromRepo = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Tag')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Tag::class)
             ->findByLabel($newTagLabel);
 
         $this->assertCount(0, $newTagFromRepo);
@@ -371,7 +425,7 @@ class TagControllerTest extends WallabagCoreTestCase
         $tagLabel = 'existing label';
         $previousTagLabel = 'previous label';
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $tag = new Tag();
         $tag->setLabel($tagLabel);
@@ -405,23 +459,23 @@ class TagControllerTest extends WallabagCoreTestCase
         $this->assertStringNotContainsString('flashes.tag.notice.tag_renamed', $crawler->filter('body')->extract(['_text'])[0]);
 
         $freshEntry1 = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->find($entry1->getId());
 
         $freshEntry2 = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->find($entry2->getId());
 
         $tagFromRepo = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Tag')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Tag::class)
             ->findByLabel($tagLabel);
 
         $previousTagFromRepo = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Tag')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Tag::class)
             ->findByLabel($previousTagLabel);
 
         $this->assertCount(1, $tagFromRepo);
@@ -434,7 +488,7 @@ class TagControllerTest extends WallabagCoreTestCase
     public function testAddUnicodeTagLabel()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         $entry = new Entry($this->getLoggedInUser());
         $entry->setUrl('http://0.0.0.0/tag-caché');
@@ -463,8 +517,8 @@ class TagControllerTest extends WallabagCoreTestCase
         $client->submit($form, $data);
 
         $newEntry = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->find($entry->getId());
 
         $tags = $newEntry->getTags()->toArray();
@@ -480,7 +534,7 @@ class TagControllerTest extends WallabagCoreTestCase
     public function testAssignTagsOnSearchResults()
     {
         $this->logInAs('admin');
-        $client = $this->getClient();
+        $client = $this->getTestClient();
 
         // Search on unread list
         $crawler = $client->request('GET', '/unread/list');
@@ -496,8 +550,8 @@ class TagControllerTest extends WallabagCoreTestCase
         $client->followRedirect();
 
         $entries = $client->getContainer()
-            ->get('doctrine.orm.entity_manager')
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->get(EntityManagerInterface::class)
+            ->getRepository(Entry::class)
             ->getBuilderForSearchByUser($this->getLoggedInUserId(), 'title', 'unread')
             ->getQuery()->getResult();
 

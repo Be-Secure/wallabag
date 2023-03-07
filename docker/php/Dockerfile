@@ -53,7 +53,7 @@ RUN docker-php-ext-install -j "$(nproc)" \
 
 RUN pecl install redis; \
     pecl install imagick; \
-    pecl install xdebug; \
+    pecl install xdebug-3.1.6; \
     docker-php-ext-enable \
         redis \
         imagick \
@@ -65,7 +65,7 @@ RUN npm install -g yarn
 RUN curl -L -o /usr/local/bin/envsubst https://github.com/a8m/envsubst/releases/download/v1.1.0/envsubst-`uname -s`-`uname -m`; \
     chmod +x /usr/local/bin/envsubst
 
-COPY --from=composer:2.2.12 /usr/bin/composer /usr/local/bin/composer
+COPY --from=composer:latest /usr/bin/composer /usr/local/bin/composer
 
 COPY entrypoint.sh /entrypoint.sh
 COPY config/ /opt/wallabag/config/

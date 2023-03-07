@@ -69,8 +69,8 @@ class LocaleListenerTest extends TestCase
         $dispatcher->addSubscriber($listener);
 
         $dispatcher->dispatch(
-            KernelEvents::REQUEST,
-            $event
+            $event,
+            KernelEvents::REQUEST
         );
 
         $this->assertSame('fr', $request->getLocale());
@@ -78,7 +78,7 @@ class LocaleListenerTest extends TestCase
 
     private function getEvent(Request $request)
     {
-        $kernel = $this->getMockBuilder('Symfony\Component\HttpKernel\HttpKernelInterface')
+        $kernel = $this->getMockBuilder(HttpKernelInterface::class)
             ->disableOriginalConstructor()
             ->getMock();
 

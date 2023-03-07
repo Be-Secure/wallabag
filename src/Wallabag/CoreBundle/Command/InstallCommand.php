@@ -2,9 +2,13 @@
 
 namespace Wallabag\CoreBundle\Command;
 
+use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\DriverException;
+use Doctrine\ORM\EntityManagerInterface;
 use FOS\UserBundle\Event\UserEvent;
 use FOS\UserBundle\FOSUserEvents;
-use Symfony\Bundle\FrameworkBundle\Command\ContainerAwareCommand;
+use FOS\UserBundle\Model\UserManagerInterface;
+use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -12,28 +16,46 @@ use Symfony\Component\Console\Output\BufferedOutput;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Question\Question;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Wallabag\CoreBundle\Entity\IgnoreOriginInstanceRule;
 use Wallabag\CoreBundle\Entity\InternalSetting;
+use Wallabag\UserBundle\Entity\User;
 
-class InstallCommand extends ContainerAwareCommand
+class InstallCommand extends Command
 {
-    /**
-     * @var InputInterface
-     */
-    protected $defaultInput;
-
-    /**
-     * @var SymfonyStyle
-     */
-    protected $io;
-
-    /**
-     * @var array
-     */
-    protected $functionExists = [
+    private InputInterface $defaultInput;
+    private SymfonyStyle $io;
+    private array $functionExists = [
         'curl_exec',
         'curl_multi_init',
     ];
+    private bool $runOtherCommands = true;
+
+    private EntityManagerInterface $entityManager;
+    private EventDispatcherInterface $dispatcher;
+    private UserManagerInterface $userManager;
+    private string $databaseDriver;
+    private string $databaseName;
+    private array $defaultSettings;
+    private array $defaultIgnoreOriginInstanceRules;
+
+    public function __construct(EntityManagerInterface $entityManager, EventDispatcherInterface $dispatcher, UserManagerInterface $userManager, string $databaseDriver, string $databaseName, array $defaultSettings, array $defaultIgnoreOriginInstanceRules)
+    {
+        $this->entityManager = $entityManager;
+        $this->dispatcher = $dispatcher;
+        $this->userManager = $userManager;
+        $this->databaseDriver = $databaseDriver;
+        $this->databaseName = $databaseName;
+        $this->defaultSettings = $defaultSettings;
+        $this->defaultIgnoreOriginInstanceRules = $defaultIgnoreOriginInstanceRules;
+
+        parent::__construct();
+    }
+
+    public function disableRunOtherCommands(): void
+    {
+        $this->runOtherCommands = false;
+    }
 
     protected function configure()
     {
@@ -66,13 +88,13 @@ class InstallCommand extends ContainerAwareCommand
 
         $this->io->success('wallabag has been successfully installed.');
         $this->io->success('You can now configure your web server, see https://doc.wallabag.org');
+
+        return 0;
     }
 
-    protected function checkRequirements()
+    private function checkRequirements()
     {
         $this->io->section('Step 1 of 4: Checking system requirements.');
-
-        $doctrineManager = $this->getContainer()->get('doctrine')->getManager();
 
         $rows = [];
 
@@ -82,26 +104,26 @@ class InstallCommand extends ContainerAwareCommand
         $status = '<info>OK!</info>';
         $help = '';
 
-        if (!\extension_loaded($this->getContainer()->getParameter('database_driver'))) {
+        if (!\extension_loaded($this->databaseDriver)) {
             $fulfilled = false;
             $status = '<error>ERROR!</error>';
-            $help = 'Database driver "' . $this->getContainer()->getParameter('database_driver') . '" is not installed.';
+            $help = 'Database driver "' . $this->databaseDriver . '" is not installed.';
         }
 
-        $rows[] = [sprintf($label, $this->getContainer()->getParameter('database_driver')), $status, $help];
+        $rows[] = [sprintf($label, $this->databaseDriver), $status, $help];
 
         // testing if connection to the database can be etablished
         $label = '<comment>Database connection</comment>';
         $status = '<info>OK!</info>';
         $help = '';
 
-        $conn = $this->getContainer()->get('doctrine')->getManager()->getConnection();
+        $conn = $this->entityManager->getConnection();
 
         try {
             $conn->connect();
         } catch (\Exception $e) {
             if (false === strpos($e->getMessage(), 'Unknown database')
-                && false === strpos($e->getMessage(), 'database "' . $this->getContainer()->getParameter('database_name') . '" does not exist')) {
+                && false === strpos($e->getMessage(), 'database "' . $this->databaseName . '" does not exist')) {
                 $fulfilled = false;
                 $status = '<error>ERROR!</error>';
                 $help = 'Can\'t connect to the database: ' . $e->getMessage();
@@ -117,7 +139,7 @@ class InstallCommand extends ContainerAwareCommand
 
         // now check if MySQL isn't too old to handle utf8mb4
         if ($conn->isConnected() && 'mysql' === $conn->getDatabasePlatform()->getName()) {
-            $version = $conn->query('select version()')->fetchColumn();
+            $version = $conn->query('select version()')->fetchOne();
             $minimalVersion = '5.5.4';
 
             if (false === version_compare($version, $minimalVersion, '>')) {
@@ -130,7 +152,7 @@ class InstallCommand extends ContainerAwareCommand
         // testing if PostgreSQL > 9.1
         if ($conn->isConnected() && 'postgresql' === $conn->getDatabasePlatform()->getName()) {
             // return version should be like "PostgreSQL 9.5.4 on x86_64-apple-darwin15.6.0, compiled by Apple LLVM version 8.0.0 (clang-800.0.38), 64-bit"
-            $version = $doctrineManager->getConnection()->query('SELECT version();')->fetchColumn();
+            $version = $conn->query('SELECT version();')->fetchOne();
 
             preg_match('/PostgreSQL ([0-9\.]+)/i', $version, $matches);
 
@@ -168,7 +190,7 @@ class InstallCommand extends ContainerAwareCommand
         return $this;
     }
 
-    protected function setupDatabase()
+    private function setupDatabase()
     {
         $this->io->section('Step 2 of 4: Setting up database.');
 
@@ -236,7 +258,7 @@ class InstallCommand extends ContainerAwareCommand
         return $this;
     }
 
-    protected function setupAdmin()
+    private function setupAdmin()
     {
         $this->io->section('Step 3 of 4: Administration setup.');
 
@@ -244,10 +266,8 @@ class InstallCommand extends ContainerAwareCommand
             return $this;
         }
 
-        $em = $this->getContainer()->get('doctrine.orm.entity_manager');
-
-        $userManager = $this->getContainer()->get('fos_user.user_manager');
-        $user = $userManager->createUser();
+        $user = $this->userManager->createUser();
+        \assert($user instanceof User);
 
         $user->setUsername($this->io->ask('Username', 'wallabag'));
 
@@ -260,41 +280,41 @@ class InstallCommand extends ContainerAwareCommand
         $user->setEnabled(true);
         $user->addRole('ROLE_SUPER_ADMIN');
 
-        $em->persist($user);
+        $this->entityManager->persist($user);
 
         // dispatch a created event so the associated config will be created
-        $event = new UserEvent($user);
-        $this->getContainer()->get('event_dispatcher')->dispatch(FOSUserEvents::USER_CREATED, $event);
+        $this->dispatcher->dispatch(new UserEvent($user), FOSUserEvents::USER_CREATED);
 
         $this->io->text('<info>Administration successfully setup.</info>');
 
         return $this;
     }
 
-    protected function setupConfig()
+    private function setupConfig()
     {
         $this->io->section('Step 4 of 4: Config setup.');
-        $em = $this->getContainer()->get('doctrine.orm.entity_manager');
 
         // cleanup before insert new stuff
-        $em->createQuery('DELETE FROM WallabagCoreBundle:InternalSetting')->execute();
-        $em->createQuery('DELETE FROM WallabagCoreBundle:IgnoreOriginInstanceRule')->execute();
+        $this->entityManager->createQuery('DELETE FROM Wallabag\CoreBundle\Entity\InternalSetting')->execute();
+        $this->entityManager->createQuery('DELETE FROM Wallabag\CoreBundle\Entity\IgnoreOriginInstanceRule')->execute();
 
-        foreach ($this->getContainer()->getParameter('wallabag_core.default_internal_settings') as $setting) {
+        foreach ($this->defaultSettings as $setting) {
             $newSetting = new InternalSetting();
             $newSetting->setName($setting['name']);
             $newSetting->setValue($setting['value']);
             $newSetting->setSection($setting['section']);
-            $em->persist($newSetting);
+
+            $this->entityManager->persist($newSetting);
         }
 
-        foreach ($this->getContainer()->getParameter('wallabag_core.default_ignore_origin_instance_rules') as $ignore_origin_instance_rule) {
+        foreach ($this->defaultIgnoreOriginInstanceRules as $ignore_origin_instance_rule) {
             $newIgnoreOriginInstanceRule = new IgnoreOriginInstanceRule();
             $newIgnoreOriginInstanceRule->setRule($ignore_origin_instance_rule['rule']);
-            $em->persist($newIgnoreOriginInstanceRule);
+
+            $this->entityManager->persist($newIgnoreOriginInstanceRule);
         }
 
-        $em->flush();
+        $this->entityManager->flush();
 
         $this->io->text('<info>Config successfully setup.</info>');
 
@@ -307,8 +327,12 @@ class InstallCommand extends ContainerAwareCommand
      * @param string $command
      * @param array  $parameters Parameters to this command (usually 'force' => true)
      */
-    protected function runCommand($command, $parameters = [])
+    private function runCommand($command, $parameters = [])
     {
+        if (!$this->runOtherCommands) {
+            return $this;
+        }
+
         $parameters = array_merge(
             ['command' => $command],
             $parameters,
@@ -329,7 +353,7 @@ class InstallCommand extends ContainerAwareCommand
 
         // PDO does not always close the connection after Doctrine commands.
         // See https://github.com/symfony/symfony/issues/11750.
-        $this->getContainer()->get('doctrine')->getManager()->getConnection()->close();
+        $this->entityManager->getConnection()->close();
 
         if (0 !== $exitCode) {
             $this->getApplication()->setAutoExit(true);
@@ -347,7 +371,7 @@ class InstallCommand extends ContainerAwareCommand
      */
     private function isDatabasePresent()
     {
-        $connection = $this->getContainer()->get('doctrine')->getManager()->getConnection();
+        $connection = $this->entityManager->getConnection();
         $databaseName = $connection->getDatabase();
 
         try {
@@ -368,7 +392,7 @@ class InstallCommand extends ContainerAwareCommand
 
         // custom verification for sqlite, since `getListDatabasesSQL` doesn't work for sqlite
         if ('sqlite' === $schemaManager->getDatabasePlatform()->getName()) {
-            $params = $this->getContainer()->get('doctrine.dbal.default_connection')->getParams();
+            $params = $connection->getParams();
 
             if (isset($params['path']) && file_exists($params['path'])) {
                 return true;
@@ -379,7 +403,7 @@ class InstallCommand extends ContainerAwareCommand
 
         try {
             return \in_array($databaseName, $schemaManager->listDatabases(), true);
-        } catch (\Doctrine\DBAL\Exception\DriverException $e) {
+        } catch (DriverException $e) {
             // it means we weren't able to get database list, assume the database doesn't exist
 
             return false;
@@ -394,7 +418,7 @@ class InstallCommand extends ContainerAwareCommand
      */
     private function isSchemaPresent()
     {
-        $schemaManager = $this->getContainer()->get('doctrine')->getManager()->getConnection()->getSchemaManager();
+        $schemaManager = $this->entityManager->getConnection()->getSchemaManager();
 
         return \count($schemaManager->listTableNames()) > 0 ? true : false;
     }

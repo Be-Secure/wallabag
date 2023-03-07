@@ -5,7 +5,6 @@ namespace Tests\Wallabag\CoreBundle\Command;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Component\Console\Tester\CommandTester;
 use Tests\Wallabag\CoreBundle\WallabagCoreTestCase;
-use Wallabag\CoreBundle\Command\ReloadEntryCommand;
 use Wallabag\CoreBundle\Entity\Entry;
 
 class ReloadEntryCommandTest extends WallabagCoreTestCase
@@ -26,7 +25,7 @@ class ReloadEntryCommandTest extends WallabagCoreTestCase
     {
         parent::setUp();
 
-        $userRepository = $this->getClient()->getContainer()->get('wallabag_user.user_repository.test');
+        $userRepository = $this->getTestClient()->getContainer()->get('wallabag_user.user_repository.test');
 
         $user = $userRepository->findOneByUserName('admin');
         $this->adminEntry = new Entry($user);
@@ -50,18 +49,15 @@ class ReloadEntryCommandTest extends WallabagCoreTestCase
      */
     public function testRunReloadEntryCommand()
     {
-        $application = new Application($this->getClient()->getKernel());
-        $application->add(new ReloadEntryCommand());
+        $application = new Application($this->getTestClient()->getKernel());
 
         $command = $application->find('wallabag:entry:reload');
         $tester = new CommandTester($command);
-        $tester->execute([
-            'command' => $command->getName(),
-        ], [
+        $tester->execute([], [
             'interactive' => false,
         ]);
 
-        $reloadedEntries = $this->getClient()
+        $reloadedEntries = $this->getTestClient()
             ->getContainer()
             ->get('wallabag_core.entry_repository.test')
             ->findById([$this->adminEntry->getId(), $this->bobEntry->getId()]);
@@ -78,19 +74,17 @@ class ReloadEntryCommandTest extends WallabagCoreTestCase
      */
     public function testRunReloadEntryWithUsernameCommand()
     {
-        $application = new Application($this->getClient()->getKernel());
-        $application->add(new ReloadEntryCommand());
+        $application = new Application($this->getTestClient()->getKernel());
 
         $command = $application->find('wallabag:entry:reload');
         $tester = new CommandTester($command);
         $tester->execute([
-            'command' => $command->getName(),
             'username' => 'admin',
         ], [
             'interactive' => false,
         ]);
 
-        $entryRepository = $this->getClient()->getContainer()->get('wallabag_core.entry_repository.test');
+        $entryRepository = $this->getTestClient()->getContainer()->get('wallabag_core.entry_repository.test');
 
         $reloadedAdminEntry = $entryRepository->find($this->adminEntry->getId());
         $this->assertNotEmpty($reloadedAdminEntry->getContent());
@@ -103,13 +97,11 @@ class ReloadEntryCommandTest extends WallabagCoreTestCase
 
     public function testRunReloadEntryWithoutEntryCommand()
     {
-        $application = new Application($this->getClient()->getKernel());
-        $application->add(new ReloadEntryCommand());
+        $application = new Application($this->getTestClient()->getKernel());
 
         $command = $application->find('wallabag:entry:reload');
         $tester = new CommandTester($command);
         $tester->execute([
-            'command' => $command->getName(),
             'username' => 'empty',
         ], [
             'interactive' => false,

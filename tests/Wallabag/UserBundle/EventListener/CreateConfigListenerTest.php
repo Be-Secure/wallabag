@@ -2,6 +2,7 @@
 
 namespace Tests\Wallabag\UserBundle\EventListener;
 
+use Doctrine\ORM\EntityManager;
 use FOS\UserBundle\Event\FilterUserResponseEvent;
 use FOS\UserBundle\FOSUserEvents;
 use PHPUnit\Framework\TestCase;
@@ -25,13 +26,12 @@ class CreateConfigListenerTest extends TestCase
     protected function setUp(): void
     {
         $session = new Session(new MockArraySessionStorage());
-        $this->em = $this->getMockBuilder('Doctrine\ORM\EntityManager')
+        $this->em = $this->getMockBuilder(EntityManager::class)
             ->disableOriginalConstructor()
             ->getMock();
 
         $this->listener = new CreateConfigListener(
             $this->em,
-            'baggy',
             20,
             50,
             'fr',
@@ -60,7 +60,6 @@ class CreateConfigListenerTest extends TestCase
         );
 
         $config = new Config($user);
-        $config->setTheme('baggy');
         $config->setItemsPerPage(20);
         $config->setFeedLimit(50);
         $config->setLanguage('fr');
@@ -73,8 +72,8 @@ class CreateConfigListenerTest extends TestCase
             ->method('flush');
 
         $this->dispatcher->dispatch(
-            FOSUserEvents::REGISTRATION_COMPLETED,
-            $event
+            $event,
+            FOSUserEvents::REGISTRATION_COMPLETED
         );
     }
 }

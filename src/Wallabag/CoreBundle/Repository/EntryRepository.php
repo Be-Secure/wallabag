@@ -2,17 +2,27 @@
 
 namespace Wallabag\CoreBundle\Repository;
 
-use Doctrine\ORM\EntityRepository;
+use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\ORM\NoResultException;
 use Doctrine\ORM\QueryBuilder;
+use Doctrine\Persistence\ManagerRegistry;
 use Pagerfanta\Doctrine\ORM\QueryAdapter as DoctrineORMAdapter;
 use Pagerfanta\Pagerfanta;
 use Wallabag\CoreBundle\Entity\Entry;
 use Wallabag\CoreBundle\Entity\Tag;
 use Wallabag\CoreBundle\Helper\UrlHasher;
 
-class EntryRepository extends EntityRepository
+/**
+ * @method Entry[]    findById(int $id)
+ * @method Entry|null findOneByUser(int $userId)
+ */
+class EntryRepository extends ServiceEntityRepository
 {
+    public function __construct(ManagerRegistry $registry)
+    {
+        parent::__construct($registry, Entry::class);
+    }
+
     /**
      * Retrieves all entries for a user.
      *
@@ -198,12 +208,13 @@ class EntryRepository extends EntityRepository
      * @param int    $since
      * @param string $tags
      * @param string $detail     'metadata' or 'full'. Include content field if 'full'
+     * @param string $domainName
      *
      * @todo Breaking change: replace default detail=full by detail=metadata in a future version
      *
      * @return Pagerfanta
      */
-    public function findEntries($userId, $isArchived = null, $isStarred = null, $isPublic = null, $sort = 'created', $order = 'asc', $since = 0, $tags = '', $detail = 'full')
+    public function findEntries($userId, $isArchived = null, $isStarred = null, $isPublic = null, $sort = 'created', $order = 'asc', $since = 0, $tags = '', $detail = 'full', $domainName = '')
     {
         if (!\in_array(strtolower($detail), ['full', 'metadata'], true)) {
             throw new \Exception('Detail "' . $detail . '" parameter is wrong, allowed: full or metadata');
@@ -242,7 +253,7 @@ class EntryRepository extends EntityRepository
                 $entryAlias = 'e' . $i;
                 $tagAlias = 't' . $i;
 
-                // Complexe queries to ensure multiple tags are associated to an entry
+                // Complex queries to ensure multiple tags are associated to an entry
                 // https://stackoverflow.com/a/6638146/569101
                 $qb->andWhere($qb->expr()->in(
                     'e.id',
@@ -256,6 +267,10 @@ class EntryRepository extends EntityRepository
                 // bound parameter to the main query builder
                 $qb->setParameter('label' . $i, $tag);
             }
+        }
+
+        if (\is_string($domainName) && '' !== $domainName) {
+            $qb->andWhere('e.domainName = :domainName')->setParameter('domainName', $domainName);
         }
 
         if (!\in_array(strtolower($order), ['asc', 'desc'], true)) {
@@ -368,7 +383,7 @@ class EntryRepository extends EntityRepository
      * Remove tags from all user entries.
      *
      * @param int        $userId
-     * @param Array<Tag> $tags
+     * @param array<Tag> $tags
      */
     public function removeTags($userId, $tags)
     {

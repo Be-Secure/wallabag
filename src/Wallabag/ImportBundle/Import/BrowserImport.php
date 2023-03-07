@@ -108,7 +108,7 @@ abstract class BrowserImport extends AbstractImport
         $url = \array_key_exists('uri', $importedEntry) ? $importedEntry['uri'] : $importedEntry['url'];
 
         $existingEntry = $this->em
-            ->getRepository('WallabagCoreBundle:Entry')
+            ->getRepository(Entry::class)
             ->findByUrlAndUserId($url, $this->user->getId());
 
         if (false !== $existingEntry) {
@@ -173,7 +173,7 @@ abstract class BrowserImport extends AbstractImport
                 $this->em->flush();
 
                 foreach ($entryToBeFlushed as $entry) {
-                    $this->eventDispatcher->dispatch(EntrySavedEvent::NAME, new EntrySavedEvent($entry));
+                    $this->eventDispatcher->dispatch(new EntrySavedEvent($entry), EntrySavedEvent::NAME);
                 }
 
                 $entryToBeFlushed = [];
@@ -185,7 +185,7 @@ abstract class BrowserImport extends AbstractImport
 
         if (!empty($entryToBeFlushed)) {
             foreach ($entryToBeFlushed as $entry) {
-                $this->eventDispatcher->dispatch(EntrySavedEvent::NAME, new EntrySavedEvent($entry));
+                $this->eventDispatcher->dispatch(new EntrySavedEvent($entry), EntrySavedEvent::NAME);
             }
         }
     }

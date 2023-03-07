@@ -14,6 +14,7 @@ framework:
     translator:
         enabled: true
         fallback: "%locale%"
+        default_path: '%kernel.project_dir%/translations'
     secret: "%secret%"
     router:
         resource: "%kernel.project_dir%/app/config/routing.yml"
@@ -33,14 +34,18 @@ framework:
     fragments: ~
     http_method_override: true
     assets: ~
+    mailer:
+        dsn: "%mailer_dsn%"
 
 # Twig Configuration
 twig:
     debug: "%kernel.debug%"
     strict_variables: "%kernel.debug%"
     form_themes:
-        - "LexikFormFilterBundle:Form:form_div_layout.html.twig"
-    exception_controller: wallabag_core.exception_controller:showAction
+        - "@LexikFormFilter/Form/form_div_layout.html.twig"
+    exception_controller: Wallabag\CoreBundle\Controller\ExceptionController:showAction
+    globals:
+        registration_enabled: '%fosuser_registration%'
 
 # Doctrine Configuration
 doctrine:
@@ -54,6 +59,8 @@ doctrine:
         charset: "%database_charset%"
         path: "%database_path%"
         unix_socket: "%database_socket%"
+        types:
+            json_array: Wallabag\CoreBundle\Doctrine\JsonArrayType
 
     orm:
         auto_generate_proxy_classes: "%kernel.debug%"
@@ -70,22 +77,14 @@ stof_doctrine_extensions:
             sluggable: true
 
 doctrine_migrations:
-    dir_name: "%kernel.project_dir%/app/DoctrineMigrations"
-    namespace: Application\Migrations
-    table_name: migration_versions
-    name: Application Migrations
-
-# Swiftmailer Configuration
-swiftmailer:
-    transport:   "%mailer_transport%"
-    username:    "%mailer_user%"
-    password:    "%mailer_password%"
-    host:        "%mailer_host%"
-    port:        "%mailer_port%"
-    encryption:  "%mailer_encryption%"
-    auth_mode:   "%mailer_auth_mode%"
-    spool:
-        type: memory
+    migrations_paths:
+        'Application\Migrations': "%kernel.project_dir%/app/DoctrineMigrations"
+    storage:
+        table_storage:
+            table_name: 'migration_versions'
+            version_column_name: 'version'
+            version_column_length: 192
+            executed_at_column_name: 'executed_at'
 
 fos_rest:
     param_fetcher_listener: true
@@ -110,14 +109,8 @@ fos_rest:
             pdf: true
             epub: true
             mobi: true
-        templating_formats:
-            html: false
-        force_redirects:
-            html: true
         failed_validation: HTTP_BAD_REQUEST
-        default_engine: twig
-    routing_loader:
-        default_format: json
+    routing_loader: false
     format_listener:
         enabled: true
         rules:
@@ -129,11 +122,23 @@ fos_rest:
             - { path: '^/', priorities: ['text/html', '*/*'], fallback_format: html, prefer_extension: false }
 
 nelmio_api_doc:
-    sandbox:
-        enabled: false
-    cache:
-        enabled: true
-    name: wallabag API documentation
+    areas:
+        default:
+            disable_default_routes: true
+    documentation:
+        info:
+            title: wallabag API documentation
+            description: This is the API documentation of wallabag
+            version: 2.x
+        components:
+            securitySchemes:
+                Bearer:
+                    type: apiKey
+                    description: 'Value: Bearer {jwt}'
+                    name: Authorization
+                    in: header
+        security:
+            - Bearer: []
 
 nelmio_cors:
     defaults:
@@ -164,17 +169,6 @@ nelmio_cors:
             max_age: 3600
             hosts: ['^api\.']
 
-liip_theme:
-    load_controllers: false
-    themes:
-        - baggy
-        - material
-    autodetect_theme: wallabag_core.helper.detect_active_theme
-
-    path_patterns:
-        bundle_resource:
-            - "%%bundle_path%%/Resources/views/themes/%%current_theme%%/%%template%%"
-
 fos_user:
     db_driver: orm
     firewall_name: secured_area
@@ -183,8 +177,10 @@ fos_user:
         confirmation:
             enabled: "%fosuser_confirmation%"
     from_email:
-        address:        "%from_email%"
-        sender_name:    wallabag
+        address: "%from_email%"
+        sender_name: wallabag
+    service:
+        mailer: Wallabag\UserBundle\Mailer\UserMailer
 
 fos_oauth_server:
     db_driver:           orm
@@ -210,14 +206,14 @@ scheb_two_factor:
     google:
         enabled: "%twofactor_auth%"
         issuer: "%server_name%"
-        template: WallabagUserBundle:Authentication:form.html.twig
+        template: "@WallabagUser/Authentication/form.html.twig"
 
     email:
         enabled: "%twofactor_auth%"
         sender_email: "%twofactor_sender%"
         digits: 6
-        template: WallabagUserBundle:Authentication:form.html.twig
-        mailer: wallabag_user.auth_code_mailer
+        template: "@WallabagUser/Authentication/form.html.twig"
+        mailer: Wallabag\UserBundle\Mailer\AuthCodeMailer
 
 kphoen_rulerz:
     targets:
@@ -404,7 +400,7 @@ sensio_framework_extra:
 httplug:
     clients:
         wallabag_core:
-            factory: 'wallabag_core.http_client_factory'
+            factory: Wallabag\CoreBundle\Helper\HttpClientFactory
             config:
                 defaults:
                     timeout: 10

@@ -2,12 +2,21 @@
 
 namespace Wallabag\UserBundle\Repository;
 
-use Doctrine\ORM\EntityRepository;
+use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\ORM\QueryBuilder;
+use Doctrine\Persistence\ManagerRegistry;
 use Wallabag\UserBundle\Entity\User;
 
-class UserRepository extends EntityRepository
+/**
+ * @method User|null findOneById(int $id)
+ */
+class UserRepository extends ServiceEntityRepository
 {
+    public function __construct(ManagerRegistry $registry)
+    {
+        parent::__construct($registry, User::class);
+    }
+
     /**
      * Find a user by its username and Feed token.
      *

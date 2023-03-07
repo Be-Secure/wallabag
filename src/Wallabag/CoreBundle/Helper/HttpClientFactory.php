@@ -15,10 +15,10 @@ use Psr\Log\LoggerInterface;
  */
 class HttpClientFactory implements ClientFactory
 {
-    /** @var [\GuzzleHttp\Event\SubscriberInterface] */
+    /** @var SubscriberInterface[] */
     private $subscribers = [];
 
-    /** @var \GuzzleHttp\Cookie\CookieJar */
+    /** @var CookieJar */
     private $cookieJar;
 
     private $restrictedAccess;

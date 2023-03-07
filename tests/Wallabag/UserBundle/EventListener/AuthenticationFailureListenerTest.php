@@ -8,8 +8,10 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RequestStack;
+use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
 use Symfony\Component\Security\Core\AuthenticationEvents;
 use Symfony\Component\Security\Core\Event\AuthenticationFailureEvent;
+use Symfony\Component\Security\Core\Exception\AuthenticationException;
 use Wallabag\UserBundle\EventListener\AuthenticationFailureListener;
 
 class AuthenticationFailureListenerTest extends TestCase
@@ -41,11 +43,11 @@ class AuthenticationFailureListenerTest extends TestCase
 
     public function testOnAuthenticationFailure()
     {
-        $token = $this->getMockBuilder('Symfony\Component\Security\Core\Authentication\Token\TokenInterface')
+        $token = $this->getMockBuilder(TokenInterface::class)
             ->disableOriginalConstructor()
             ->getMock();
 
-        $exception = $this->getMockBuilder('Symfony\Component\Security\Core\Exception\AuthenticationException')
+        $exception = $this->getMockBuilder(AuthenticationException::class)
             ->disableOriginalConstructor()
             ->getMock();
 
@@ -55,13 +57,13 @@ class AuthenticationFailureListenerTest extends TestCase
         );
 
         $this->dispatcher->dispatch(
-            AuthenticationEvents::AUTHENTICATION_FAILURE,
-            $event
+            $event,
+            AuthenticationEvents::AUTHENTICATION_FAILURE
         );
 
         $records = $this->logHandler->getRecords();
 
         $this->assertCount(1, $records);
-        $this->assertSame('Authentication failure for user "admin", from IP "127.0.0.1", with UA: "Symfony/3.X".', $records[0]['message']);
+        $this->assertSame('Authentication failure for user "admin", from IP "127.0.0.1", with UA: "Symfony".', $records[0]['message']);
     }
 }

@@ -2,28 +2,44 @@
 
 namespace Wallabag\CoreBundle\Controller;
 
-use Symfony\Bundle\FrameworkBundle\Controller\Controller;
+use Doctrine\ORM\EntityManagerInterface;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\Form\Form;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Contracts\Translation\TranslatorInterface;
 use Wallabag\CoreBundle\Entity\IgnoreOriginInstanceRule;
+use Wallabag\CoreBundle\Form\Type\IgnoreOriginInstanceRuleType;
+use Wallabag\CoreBundle\Repository\IgnoreOriginInstanceRuleRepository;
 
 /**
  * IgnoreOriginInstanceRuleController controller.
  *
  * @Route("/ignore-origin-instance-rules")
  */
-class IgnoreOriginInstanceRuleController extends Controller
+class IgnoreOriginInstanceRuleController extends AbstractController
 {
+    private EntityManagerInterface $entityManager;
+    private TranslatorInterface $translator;
+
+    public function __construct(EntityManagerInterface $entityManager, TranslatorInterface $translator)
+    {
+        $this->entityManager = $entityManager;
+        $this->translator = $translator;
+    }
+
     /**
      * Lists all IgnoreOriginInstanceRule entities.
      *
      * @Route("/", name="ignore_origin_instance_rules_index", methods={"GET"})
      */
-    public function indexAction()
+    public function indexAction(IgnoreOriginInstanceRuleRepository $repository)
     {
-        $rules = $this->get('wallabag_core.ignore_origin_instance_rule_repository')->findAll();
+        $rules = $repository->findAll();
 
-        return $this->render('WallabagCoreBundle:IgnoreOriginInstanceRule:index.html.twig', [
+        return $this->render('@WallabagCore/IgnoreOriginInstanceRule/index.html.twig', [
             'rules' => $rules,
         ]);
     }
@@ -33,29 +49,28 @@ class IgnoreOriginInstanceRuleController extends Controller
      *
      * @Route("/new", name="ignore_origin_instance_rules_new", methods={"GET", "POST"})
      *
-     * @return \Symfony\Component\HttpFoundation\Response
+     * @return Response
      */
     public function newAction(Request $request)
     {
         $ignoreOriginInstanceRule = new IgnoreOriginInstanceRule();
 
-        $form = $this->createForm('Wallabag\CoreBundle\Form\Type\IgnoreOriginInstanceRuleType', $ignoreOriginInstanceRule);
+        $form = $this->createForm(IgnoreOriginInstanceRuleType::class, $ignoreOriginInstanceRule);
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            $em = $this->getDoctrine()->getManager();
-            $em->persist($ignoreOriginInstanceRule);
-            $em->flush();
+            $this->entityManager->persist($ignoreOriginInstanceRule);
+            $this->entityManager->flush();
 
-            $this->get('session')->getFlashBag()->add(
+            $this->addFlash(
                 'notice',
-                $this->get('translator')->trans('flashes.ignore_origin_instance_rule.notice.added')
+                $this->translator->trans('flashes.ignore_origin_instance_rule.notice.added')
             );
 
             return $this->redirectToRoute('ignore_origin_instance_rules_index');
         }
 
-        return $this->render('WallabagCoreBundle:IgnoreOriginInstanceRule:new.html.twig', [
+        return $this->render('@WallabagCore/IgnoreOriginInstanceRule/new.html.twig', [
             'rule' => $ignoreOriginInstanceRule,
             'form' => $form->createView(),
         ]);
@@ -66,28 +81,27 @@ class IgnoreOriginInstanceRuleController extends Controller
      *
      * @Route("/{id}/edit", name="ignore_origin_instance_rules_edit", methods={"GET", "POST"})
      *
-     * @return \Symfony\Component\HttpFoundation\Response
+     * @return Response
      */
     public function editAction(Request $request, IgnoreOriginInstanceRule $ignoreOriginInstanceRule)
     {
         $deleteForm = $this->createDeleteForm($ignoreOriginInstanceRule);
-        $editForm = $this->createForm('Wallabag\CoreBundle\Form\Type\IgnoreOriginInstanceRuleType', $ignoreOriginInstanceRule);
+        $editForm = $this->createForm(IgnoreOriginInstanceRuleType::class, $ignoreOriginInstanceRule);
         $editForm->handleRequest($request);
 
         if ($editForm->isSubmitted() && $editForm->isValid()) {
-            $em = $this->getDoctrine()->getManager();
-            $em->persist($ignoreOriginInstanceRule);
-            $em->flush();
+            $this->entityManager->persist($ignoreOriginInstanceRule);
+            $this->entityManager->flush();
 
-            $this->get('session')->getFlashBag()->add(
+            $this->addFlash(
                 'notice',
-                $this->get('translator')->trans('flashes.ignore_origin_instance_rule.notice.updated')
+                $this->translator->trans('flashes.ignore_origin_instance_rule.notice.updated')
             );
 
             return $this->redirectToRoute('ignore_origin_instance_rules_index');
         }
 
-        return $this->render('WallabagCoreBundle:IgnoreOriginInstanceRule:edit.html.twig', [
+        return $this->render('@WallabagCore/IgnoreOriginInstanceRule/edit.html.twig', [
             'rule' => $ignoreOriginInstanceRule,
             'edit_form' => $editForm->createView(),
             'delete_form' => $deleteForm->createView(),
@@ -99,7 +113,7 @@ class IgnoreOriginInstanceRuleController extends Controller
      *
      * @Route("/{id}", name="ignore_origin_instance_rules_delete", methods={"DELETE"})
      *
-     * @return \Symfony\Component\HttpFoundation\RedirectResponse
+     * @return RedirectResponse
      */
     public function deleteAction(Request $request, IgnoreOriginInstanceRule $ignoreOriginInstanceRule)
     {
@@ -107,14 +121,13 @@ class IgnoreOriginInstanceRuleController extends Controller
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            $this->get('session')->getFlashBag()->add(
+            $this->addFlash(
                 'notice',
-                $this->get('translator')->trans('flashes.ignore_origin_instance_rule.notice.deleted')
+                $this->translator->trans('flashes.ignore_origin_instance_rule.notice.deleted')
             );
 
-            $em = $this->getDoctrine()->getManager();
-            $em->remove($ignoreOriginInstanceRule);
-            $em->flush();
+            $this->entityManager->remove($ignoreOriginInstanceRule);
+            $this->entityManager->flush();
         }
 
         return $this->redirectToRoute('ignore_origin_instance_rules_index');
@@ -125,7 +138,7 @@ class IgnoreOriginInstanceRuleController extends Controller
      *
      * @param IgnoreOriginInstanceRule $ignoreOriginInstanceRule The ignore origin instance rule entity
      *
-     * @return \Symfony\Component\Form\Form The form
+     * @return Form The form
      */
     private function createDeleteForm(IgnoreOriginInstanceRule $ignoreOriginInstanceRule)
     {

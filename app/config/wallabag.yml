@@ -1,5 +1,5 @@
 wallabag_core:
-    version: 2.5.1
+    version: 2.5.2
     paypal_url: "https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=9UBA65LG3FX9Y&lc=gb"
     languages:
         en: 'English'
@@ -24,7 +24,6 @@ wallabag_core:
         cs: 'Čeština'
         el: 'Ελληνικά'
     items_on_page: 12
-    theme: material
     language: '%locale%'
     rss_limit: 50
     reading_speed: 200
@@ -39,10 +38,6 @@ wallabag_core:
     default_internal_settings:
         -
             name: share_public
-            value: 1
-            section: entry
-        -
-            name: carrot
             value: 1
             section: entry
         -
@@ -66,16 +61,8 @@ wallabag_core:
             value: 1
             section: entry
         -
-            name: share_scuttle
-            value: 1
-            section: entry
-        -
             name: shaarli_url
             value: https://myshaarli.com
-            section: entry
-        -
-            name: scuttle_url
-            value: https://scuttle.org
             section: entry
         -
             name: share_mail
@@ -177,9 +164,6 @@ wallabag_core:
             rule: host = "feeds.reuters.com"
         -
             rule: _all ~ "https?://www\.lemonde\.fr/tiny.*"
-
-wallabag_user:
-    registration_enabled: "%fosuser_registration%"
 
 wallabag_import:
     allow_mimetypes: ['application/octet-stream', 'application/json', 'text/plain', 'text/csv']
